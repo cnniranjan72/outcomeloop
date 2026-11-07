@@ -1197,6 +1197,20 @@ found and drove fixes for: a flagged caller ID kept at 91 % on an approval-only 
 small `next_campaign_only` workflow, a second prompt incident left unfixed when credits ran low, false decay
 rollbacks from a too-loose repeated test, and 20-hour MTTR on a borderline-unsafe prompt.
 
+## Dependencies and supply chain
+
+- The controller imports only the standard library plus `httpx` and `numpy` (both already required by the provided
+  simulator); storage is the stdlib `sqlite3`.
+- `requirements.txt` is the assignment's file and stays the contract for `run.sh`. `requirements.lock.txt` pins the
+  exact versions everything was verified with; the Dockerfile installs the lock, which makes container runs
+  reproducible (a newer numpy changes the simulator's random stream, which is why unpinned Linux and Windows runs
+  differ by a few points).
+- `pip-audit -r requirements.lock.txt`: no known vulnerabilities at the time of writing.
+- No secrets are needed or read; the only network peer is the simulator URL given to `run.sh`. The optional
+  `serve-views` HTTP server binds to 127.0.0.1 and opens the store read-only.
+- SQL is parameterised; the few f-string fragments interpolate only internal identifiers (column names, integer
+  codes, and cohort ids that `cohort_id_for` restricts to `[A-Za-z0-9_]`).
+
 ## Docker
 
 Not required (`run.sh` is native), but provided for a reproducible Linux run matching the grader's box:
