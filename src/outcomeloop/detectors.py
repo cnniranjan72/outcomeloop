@@ -136,27 +136,34 @@ def incident_interaction(db: DB, wf: int, bad_prompt: str, until: int, min_conne
                          alpha: float = 0.05) -> dict:
     """Did the bad prompt hurt some variant options more than others (incident x variant interaction)?
 
-    Welcome message, voice and caller ID are randomised per dial both before and during a prompt incident, so for
-    each option o of a dimension, (rate during - rate before) for o minus the same change for all other options is a
-    randomised difference-in-differences: anything that moved every option alike (time of day, campaign mix, the
-    prompt's main effect) cancels. Tested for the QA flag rate and for engagement, two-sided, Bonferroni across all
-    option x metric tests; an option needs `min_connected` connected calls in each of the four cells.
+    Welcome message, voice and caller ID are randomised per dial both before and during a prompt incident. For each
+    option o present in both windows, (QA flag rate during - before) for o minus the same change for the *other
+    options present in both windows* is a randomised difference-in-differences: anything that moved every option
+    alike (time, campaign mix, the prompt's main effect) cancels. The comparison group is restricted to options
+    present in both windows — comparing o with W3 before and W2 during would compare different things.
 
-    Diagnostic only: the fix (reverting the prompt) is workflow-wide either way. A detected interaction means
-    experiment data from the incident window is not comparable across arms, which the audit then says.
-    Limit: the "before" window is the 24 h before the first call on the bad prompt; the during window ends at the
-    fix. Short incidents rarely reach the sample floor, and that is reported, not hidden."""
+    Only the QA flag rate can raise an interaction: hallucination is what a prompt changes, and options do not have
+    their own flag trends. Engagement is reported but never flagged: an option's engagement effect can change over
+    the window by itself (a decaying winner), which a before/during comparison cannot tell apart from an interaction.
+    Two-sided, Bonferroni across the flag tests; every cell needs `min_connected` connected calls.
+
+    Diagnostic only: the fix (reverting the prompt) is workflow-wide either way."""
     from .stats import z_of
     pc = db.code("prompt_version", bad_prompt)
     first = db.q1("SELECT MIN(minute) FROM calls WHERE wf=? AND prompt=? AND minute<?", (wf, pc, until))[0]
     if first is None:
         return {"checked": False, "reason": "no calls on the incident prompt"}
     lo = first - 1440
-    names = {}
-    for (kind, value), c in db._codes.items():
-        names[(kind, c)] = value
+    names = {(kind, c): value for (kind, value), c in db._codes.items()}
     tests, out = [], {"checked": True, "window_before": [lo, first], "window_during": [first, until], "dims": {},
-                      "interactions": []}
+                      "interactions": [], "flagged_metric": "flag"}
+
+    def rate_did(o, r, i):
+        p = [x[i] / x[0] for x in (o[1], o[0], r[1], r[0])]
+        did = (p[0] - p[1]) - (p[2] - p[3])
+        se = sum(q * (1 - q) / x[0] for q, x in zip(p, (o[1], o[0], r[1], r[0]))) ** 0.5
+        return round(did, 4), round(did / se, 2) if se else 0.0
+
     for dim, col in (("welcome_message", "wm"), ("voice", "voice"), ("caller_id", "did")):
         rows = db.q(f"SELECT {col}, prompt=?, COUNT(*), SUM(flag), SUM(eng) FROM calls WHERE wf=? AND conn=1 AND"
                     " ((minute>=? AND minute<? AND prompt!=?) OR (minute>=? AND minute<? AND prompt=?)) GROUP BY 1, 2",
@@ -164,31 +171,28 @@ def incident_interaction(db: DB, wf: int, bad_prompt: str, until: int, min_conne
         cells: dict[int, dict[int, tuple[int, int, int]]] = {}
         for opt, during, n, f, e in rows:
             cells.setdefault(opt, {})[during] = (n, f or 0, e or 0)
-        if len(cells) < 2:
-            continue
-        tot = {d: tuple(sum(cells[o].get(d, (0, 0, 0))[i] for o in cells) for i in range(3)) for d in (0, 1)}
+        both = {o: (c.get(0, (0, 0, 0)), c.get(1, (0, 0, 0))) for o, c in cells.items()}
+        ok = sorted(o for o, (b, d) in both.items() if min(b[0], d[0]) >= min_connected)
         recs = {}
-        for opt, c in sorted(cells.items()):
-            b, d = c.get(0, (0, 0, 0)), c.get(1, (0, 0, 0))
-            rb = tuple(tot[0][i] - b[i] for i in range(3))
-            rd = tuple(tot[1][i] - d[i] for i in range(3))
+        for opt in sorted(both):
             name = names.get((dim, opt), str(opt))
-            if min(b[0], d[0], rb[0], rd[0]) < min_connected:
+            b, d = both[opt]
+            if opt not in ok:
                 recs[name] = {"insufficient": True, "connected": [b[0], d[0]]}
                 continue
-            rec = {"connected": [b[0], d[0]]}
-            for metric, i in (("flag", 1), ("engagement", 2)):
-                p = [x[i] / x[0] for x in (d, b, rd, rb)]
-                did = (p[0] - p[1]) - (p[2] - p[3])
-                se = sum(q * (1 - q) / x[0] for q, x in zip(p, (d, b, rd, rb))) ** 0.5
-                z = did / se if se else 0.0
-                rec[metric] = {"did": round(did, 4), "z": round(z, 2)}
-                tests.append((dim, name, metric, z))
-            recs[name] = rec
+            others = [both[o] for o in ok if o != opt]
+            if not others:
+                recs[name] = {"insufficient": True, "connected": [b[0], d[0]], "reason": "no comparison option"}
+                continue
+            rest = tuple(tuple(sum(x[w][i] for x in others) for i in range(3)) for w in (0, 1))
+            fd, fz = rate_did((b, d), rest, 1)
+            ed, ez = rate_did((b, d), rest, 2)
+            recs[name] = {"connected": [b[0], d[0]], "flag": {"did": fd, "z": fz},
+                          "engagement": {"did": ed, "z": ez, "descriptive_only": True}}
+            tests.append((dim, name, fz))
         out["dims"][dim] = recs
     zc = z_of(alpha / 2 / max(len(tests), 1))
     out["z_critical"] = round(zc, 2)
     out["tests"] = len(tests)
-    out["interactions"] = [{"dim": d, "option": o, "metric": m, "z": round(z, 2)} for d, o, m, z in tests
-                           if abs(z) > zc]
+    out["interactions"] = [{"dim": d, "option": o, "metric": "flag", "z": z} for d, o, z in tests if abs(z) > zc]
     return out
