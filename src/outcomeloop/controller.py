@@ -909,7 +909,10 @@ class Controller:
                 due_look = (now % 1440) // 60 == look_hour and now - (e.start_minute if e.start_minute is not None else now) >= 20 * 60
                 final = now - (e.start_minute if e.start_minute is not None else now) >= e.horizon_days * 1440
                 if due_look or final:
-                    res = self.exp.look(e, now, cohorts, {"margin": margin}, final)
+                    other_dim = "voice" if dim == "welcome_message" else "welcome_message"
+                    od = cfg["allocations"]["default"][other_dim]
+                    other = (other_dim, max(sorted(od), key=lambda o: od[o])) if len(spec["options"][other_dim]) > 1                         else None
+                    res = self.exp.look(e, now, cohorts, {"margin": margin, "other": other}, final)
                     e.looks.append({k: v for k, v in res.items() if k != "cohort_check"} | {"cohort_check": res.get("cohort_check")})
                     with db.tx():
                         self._apply_look(e, res, now, wf)

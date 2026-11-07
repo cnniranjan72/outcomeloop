@@ -257,3 +257,20 @@ def test_decay_window_widens_for_thin_holdout(db, eng):
     e.promoted_minute = NOW - 4 * DAY
     dc = eng.decay_check(e, NOW, [])
     assert dc["window_hours"] > 24 and dc["decayed"] == ["default"]
+
+
+def test_interaction_blocks_a_winner_that_loses_where_it_will_run(db, eng):
+    # voice experiment; welcome is the other dimension, W1 dominant. Pooled, V2 beats V1 — but only thanks to the
+    # minor welcome W2; alongside the dominant W1 (where most traffic will run) V2 is worse.
+    add_calls(db, WF, 4500, 1500, 600, spread=NOW, cfg_ver=VER, voice="V1", wm="W1")    # 0.40
+    add_calls(db, WF, 1500, 500, 140, spread=NOW, cfg_ver=VER, voice="V2", wm="W1")     # 0.28 with W1
+    add_calls(db, WF, 1500, 500, 200, spread=NOW, cfg_ver=VER, voice="V1", wm="W2")     # 0.40
+    add_calls(db, WF, 3000, 1000, 800, spread=NOW, cfg_ver=VER, voice="V2", wm="W2")    # 0.80 with W2
+    e = exp(arms=("V1", "V2"))
+    pooled_only = eng.look(e, NOW, [], GUARD, final_due=True)
+    assert pooled_only["action"] == "promote" and pooled_only["winner"] == "V2"
+    checked = eng.look(exp(arms=("V1", "V2")), NOW, [], {**GUARD, "other": ("welcome_message", "W1")}, final_due=True)
+    assert checked["interaction"]["V2"]["blocked"] and checked["action"] != "promote"
+    # no interaction: the same winner passes when it also wins within the dominant stratum
+    ok = eng.look(exp(arms=("V1", "V2")), NOW, [], {**GUARD, "other": ("welcome_message", "W2")}, final_due=True)
+    assert not ok["interaction"]["V2"]["blocked"] and ok["action"] == "promote"

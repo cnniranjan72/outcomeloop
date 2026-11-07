@@ -260,6 +260,10 @@ class ExperimentEngine:
             unstable = self._unstable(e, now, sorted(winners), cmps, cohorts)
             res["stability"] = unstable
             winners -= {o for o, v in unstable.items() if v.get("unstable")}
+        if winners and guardrail.get("other"):
+            inter = self._interaction(e, now, sorted(winners), cmps, guardrail["other"])
+            res["interaction"] = inter
+            winners -= {o for o, v in inter.items() if v.get("blocked")}
         if winners:
             # deterministic pick: highest 80% lower confidence bound on the lift, ties by option order
             w = max(sorted(winners), key=lambda o: cmps[o].lcb(0.8))
@@ -307,6 +311,33 @@ class ExperimentEngine:
                 zd = (rc.diff - ref.diff) / ((rc.se ** 2 + ref.se ** 2) ** 0.5)
                 rec.update({"recent_lift": round(rc.diff, 4), "z_vs_overall": round(zd, 2)})
                 rec["unstable"] = zd < -s.harm_z or rc.diff <= 0
+            out[o] = rec
+        return out
+
+    def _interaction(self, e: Experiment, now: int, opts: list[str], cmps: dict, other: tuple[str, str]) -> dict:
+        """Welcome × voice interaction check. The marginal (pooled) lift averages over the other dimension's arms;
+        after promotion most traffic hears the other dimension's dominant option. Estimate the winner's lift within
+        that stratum and block the promotion if, with enough data, it is <= 0 and significantly below the pooled lift
+        (z < -1.645) — i.e. the winner does not win where it will actually run."""
+        s = self.s
+        other_dim, other_opt = other
+        col = "wm" if e.dim == "welcome_message" else "voice"
+        ocol = "wm" if other_dim == "welcome_message" else "voice"
+        vs = e.versions or [-1]
+        rows = self.db.q(f"SELECT {col}, SUM(conn), SUM(eng) FROM arm_hour WHERE wf=? AND hb>=? AND hb<? AND {ocol}=?"
+                         f" AND cfg_ver IN ({','.join('?' * len(vs))}) GROUP BY 1",
+                         (e.wf, (e.start_minute or 0) // 60, -(-now // 60), self.db.code(other_dim, other_opt), *vs))
+        cell = {self.db.decode(e.dim, o): (k, g) for o, k, g in rows}
+        i = cell.get(e.incumbent, (0, 0))
+        out = {}
+        for o in opts:
+            w = cell.get(o, (0, 0))
+            rec = {"stratum": f"{other_dim}={other_opt}", "inc_conn": i[0], "win_conn": w[0]}
+            if min(i[0], w[0]) >= s.min_arm_connected_for_look:
+                c = compare(Prop(i[1], i[0]), Prop(w[1], w[0]))
+                zd = (c.diff - cmps[o].diff) / ((c.se ** 2 + cmps[o].se ** 2) ** 0.5)
+                rec.update({"lift_in_stratum": round(c.diff, 4), "pooled_lift": round(cmps[o].diff, 4),
+                            "z_vs_pooled": round(zd, 2), "blocked": c.diff <= 0 and zd < -s.harm_z})
             out[o] = rec
         return out
 
