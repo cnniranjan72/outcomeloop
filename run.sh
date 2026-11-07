@@ -33,11 +33,19 @@ export PYTHONPATH="$SRC${PYTHONPATH:+$SEP$PYTHONPATH}"
 # Tiny supervisor: the controller is crash-safe (durable state + reconciliation on start), so if it ever dies
 # unexpectedly we restart it against the same DB and it resumes. It exits 0 only when the scenario finished.
 MAX_RESTARTS="${OUTCOMELOOP_MAX_RESTARTS:-20}"
+# forward SIGTERM/SIGINT (docker stop, deploys) to the controller, which stops cleanly between steps
+CHILD=""
+STOPPING=0
+trap 'STOPPING=1; [[ -n "$CHILD" ]] && kill -TERM "$CHILD" 2>/dev/null' TERM INT
 for attempt in $(seq 0 "$MAX_RESTARTS"); do
   rc=0
-  "$PY" -m outcomeloop run --url "$SIM_URL" || rc=$?
-  if [[ $rc -eq 0 ]]; then
-    exit 0
+  "$PY" -m outcomeloop run --url "$SIM_URL" &
+  CHILD=$!
+  wait "$CHILD" || rc=$?
+  while kill -0 "$CHILD" 2>/dev/null; do wait "$CHILD" || rc=$?; done   # wait again if a signal interrupted it
+  CHILD=""
+  if [[ $rc -eq 0 || $STOPPING -eq 1 ]]; then
+    exit "$rc"
   fi
   echo "[run.sh] controller exited with status $rc (attempt $attempt); restarting from durable state in 5s" >&2
   sleep 5

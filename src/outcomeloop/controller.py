@@ -111,6 +111,7 @@ class Controller:
         self.wf_by_id: dict[str, int] = {}
         self.now = 0
         self.decisions_this_hour = 0
+        self.stopping = False
         self.urgent: set[int] = set()   # workflows to decide on at the next tick regardless of cadence
         self.t_start = time.time()
         self.day_wall: dict[int, float] = {}
@@ -189,9 +190,31 @@ class Controller:
             self._sync_config(wf)
 
     # ------------------------------------------------------------------ main loop
+    def _install_signal_handlers(self):
+        """SIGTERM/SIGINT: finish the current step, then stop. Every step is already transactional, so stopping
+        between steps is clean; a SIGKILL (no handler) is covered by crash recovery instead."""
+        import signal
+
+        def handler(signum, _frame):
+            log.warning("signal %s: stopping after the current step", signum)
+            self.stopping = True
+        for sig in (getattr(signal, "SIGTERM", None), signal.SIGINT):
+            if sig is not None:
+                try:
+                    signal.signal(sig, handler)
+                except ValueError:   # not in the main thread (e.g. tests): no handler, nothing to do
+                    pass
+
     def run(self):
+        self._install_signal_handlers()
         self.startup()
         while True:
+            if self.stopping:
+                with self.db.tx():
+                    self.db.decide(self.now, None, "controller_stop", f"graceful stop at {minute_to_label(self.now)}",
+                                   reasoning="SIGTERM/SIGINT received; stopped between steps, all state committed")
+                log.info("stopped gracefully at %s", minute_to_label(self.now))
+                return
             day = self.now // 1440
             self.day_wall.setdefault(day, time.time())
             try:
