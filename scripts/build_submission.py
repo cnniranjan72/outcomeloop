@@ -1,4 +1,4 @@
-"""Assemble SUBMISSION.md from the section drafts in docs/drafts/ and fill every measured number from reports/.
+"""Assemble SUBMISSION.md from the section sources in docs/submission/ and fill every measured number from reports/.
 
     python scripts/build_submission.py
 Numbers are read from the grade JSON (`python -m sim grade --json`), reports/public_03.md and
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-D = ROOT / "docs" / "drafts"
+D = ROOT / "docs" / "submission"
 R = ROOT / "reports"
 PY = sys.executable
 
@@ -105,8 +105,9 @@ def main():
     crash_line = f"{cm.group(1)}: {cm.group(2)} checks, {cm.group(5)} failed" if cm else "see report"
     ct = re.search(r"With kills.*?\| ALL \| [\d.]+ \| ([+\-\d.%]+) \|", crash, re.S)
     cu = re.search(r"Uninterrupted.*?\| ALL \| [\d.]+ \| ([+\-\d.%]+) \|", crash, re.S)
-    crash_outcome = (f"conclusion rate {ct.group(1)} vs baseline with 9 kills, {cu.group(1)} uninterrupted"
-                     if ct and cu else "see report")
+    cc = re.search(r"Code: commit `(\w+)`", crash)
+    crash_outcome = (f"conclusion rate {ct.group(1)} vs baseline with 9 kills vs {cu.group(1)} uninterrupted, both at the"
+                     f" crash run's commit `{cc.group(1) if cc else '?'}`" if ct and cu else "see report")
 
     # ---------------------------------------------------------------- per-run facts
     a1, a2 = g1["delta_vs_baseline"]["ALL"]["conclusion_rate"], g2["delta_vs_baseline"]["ALL"]["conclusion_rate"]

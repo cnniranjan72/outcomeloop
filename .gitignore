@@ -10,4 +10,3 @@ state/
 *.old-wal
 *.old-shm
 .pytest_cache/
-docs/drafts/

@@ -114,7 +114,7 @@ adjust the `--at` argument and the narration in Scenes 3 and 5.
 ## Scene 6: Results (03:45–04:30, about 100 words)
 
 > These are the grader's reports against a no-op baseline. On the development scenario the conclusion rate
-> rose 15.5% against the baseline. On the incidents scenario it rose 26.3%. The unsafe
+> rose 15.9% against the baseline. On the incidents scenario it rose 24.4%. The unsafe
 > prompt was fixed in 60 minutes, and the spam-flagged caller ID dropped to zero share. The grader also
 > marks a few experiment launches as harmful. Exploring costs something, and we report it rather than hide
 > it.

@@ -13,8 +13,8 @@ the simulator.
 
 | Headline (from `reports/`) | Value |
 |---|---|
-| public_01 conclusion-rate lift vs no-op baseline, all workflows | `+15.5%` |
-| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+26.3%` |
+| public_01 conclusion-rate lift vs no-op baseline, all workflows | `+15.9%` |
+| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+24.4%` |
 | public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `60` |
 | public_03 ingest throughput | `~59,000` events/s |
 | public_03 controller seconds per simulated day (ingest + decide) | `70–79 s` |

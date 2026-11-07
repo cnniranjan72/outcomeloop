@@ -208,11 +208,11 @@ against a no-op baseline.
 43
 00:03:50,000 --> 00:03:55,000
 Development scenario conclusion rate:
-+15.5%
++15.9%
 
 44
 00:03:55,000 --> 00:04:00,000
-Incidents scenario: +26.3%
+Incidents scenario: +24.4%
 Unsafe prompt fixed in 60 min
 
 45
