@@ -1,0 +1,55 @@
+# Tiny end-to-end fixture for tests/integration (own values; schema copied from public_01).
+name: test_tiny_2day
+seed: 7
+days: 2
+history_days: 3
+tick_minutes: 15
+credits: 60
+
+tenants:
+  - id: test_tenant
+    workflows:
+      - id: tt_renewal
+        use_case: tiny renewal reminder for integration tests
+        language_mix: {hi: 0.6, en: 0.4}
+        dialling_window: [9, 21]
+        dials_per_hour: 120
+        daily_batch: {size: 400, at_hour: 8, returning_share: 0.3}
+        cadence: [2, 2]
+        base_pickup: 0.32
+        base_engage: 0.5
+        mid_flight: allowed
+        options:
+          welcome_message: [W1, W2]
+          voice: [V1, V2]
+          caller_id: [D1, D2, D3]
+          prompt_version: [P1, P3]
+        default_config:
+          allocations:
+            default:
+              welcome_message: {W1: 1}
+              voice: {V1: 1}
+              caller_id: {D1: 0.5, D2: 0.5}
+          prompt_version: P1
+        objective: {primary: engagement_rate, guardrail: {pickup_rate_max_drop: 0.02}}
+        governance:
+          auto_apply: {enabled: true, allowed_dims: [schedule, caller_id], max_shift: 0.3}
+          approver_hours: [10, 19]
+          approver_latency_minutes: [20, 90]
+          proposal_ttl_hours: 12
+          apply_window_hours: 2
+          max_requests_per_24h: 3
+          base_reject_rate: 0.0
+          min_validation_pass_rate: 0.97
+        did_base_health: {D3: 0.5}
+
+prompts:
+  P1: {summary: "Current production prompt", halluc: 0.006, engage_mult: 1.0}
+  P3: {summary: "Grounded prompt", halluc: 0.004, engage_mult: 1.02}
+
+# ---- hidden ground truth -------------------------------------------------------------------------
+did_l0_per_dph: 30
+did_tau_days: 2
+effects:
+  - {workflow: tt_renewal, dim: voice, value: V2, mult: 1.10}
+incidents: []

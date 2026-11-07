@@ -55,6 +55,7 @@ class Settings:
     did_probe_hours: float = 24.0       # a probe is time-boxed: healthy by then, or back to rest
     did_fast_window_minutes: int = 360
     did_slow_window_minutes: int = 1440
+    did_long_window_minutes: int = 4320   # healthy-only: lets a 5% probe on a small workflow reach n
     did_min_tv_change: float = 0.05     # don't churn config for tiny re-balancing
 
     # ---- hallucination (C8)

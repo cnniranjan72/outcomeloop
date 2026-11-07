@@ -429,17 +429,27 @@ class Controller:
         return mem
 
     def did_target(self, opts: list[str], mem: dict, cur: dict) -> dict:
-        healthy = [d for d in opts if mem.get(d, {}).get("state") == "healthy"]
-        degraded = {d for d in opts if mem.get(d, {}).get("state") == "degraded"}
-        unknown = [d for d in opts if d not in degraded and d not in healthy]
+        """Equal split over healthy numbers; 0 for degraded; untested numbers get a small probe.
+        Insufficient evidence never moves traffic: a number whose health is still unknown keeps the share it
+        already has (it only loses share once it is *measured* as degraded). This matters for
+        next_campaign_only workflows, where a new allocation reaches traffic a campaign later."""
+        state = {d: mem.get(d, {}).get("state", "unknown") for d in opts}
+        degraded = {d for d in opts if state[d] == "degraded"}
+        healthy = [d for d in opts if state[d] == "healthy"]
+        tgt: dict[str, float] = {}
+        for d in opts:
+            if d in degraded or d in healthy:
+                continue
+            if state[d] == "probe":
+                tgt[d] = self.s.did_reprobe_share           # a previously degraded number risks little traffic
+            else:
+                tgt[d] = max(cur.get(d, 0.0), self.s.did_probe_share)   # unknown: keep what it has
         if not healthy:
-            healthy = [d for d in cur if d not in degraded] or [d for d in opts if d not in degraded]
-            unknown = [d for d in unknown if d not in healthy]
-        if not healthy:
-            return cur
-        tgt = {d: (self.s.did_reprobe_share if mem.get(d, {}).get("state") == "probe" else self.s.did_probe_share)
-               for d in unknown}
-        rest = 1 - sum(tgt.values())
+            if not any(w > self.s.did_probe_share for w in tgt.values()):
+                return cur                                    # nothing measured yet and nothing to keep: no change
+            z = sum(tgt.values())
+            return {d: round(w / z, 4) for d, w in tgt.items() if w > 0}
+        rest = max(1 - sum(tgt.values()), 0.0)
         for d in healthy:
             tgt[d] = rest / len(healthy)
         return {d: round(w, 4) for d, w in tgt.items() if w > 0}
@@ -455,16 +465,25 @@ class Controller:
         probes = db.kv_get(f"prompt_probe:{wf}", [])
         if probes:
             p = probes[-1]
-            with db.tx():
-                db.kv_set(f"prompt_probe:{wf}", [])
+            thr = spec["governance"].get("min_validation_pass_rate", 0.97)
+            run = None
             if p["prompt"] == prompt:
-                run = self._validate(wf, spec, prompt, purpose=f"probe supervisor prompt change v{p['version']}")
-                thr = spec["governance"].get("min_validation_pass_rate", 0.97)
-                if run and run["pass_rate"] < thr and not open_inc:
-                    self._open_incident(wf, prompt, now, {"trigger": "validation_probe", "validation": run,
-                                                          "threshold": thr})
-                    open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state!='closed'"
-                                     " ORDER BY opened_minute DESC", (wf,))
+                def on_probe(r, inc_open=bool(open_inc)):
+                    # inside _validate's ledger transaction: the paid result, the probe's removal and the incident
+                    # commit together. Clearing the probe BEFORE the call lost it on a crash mid-call (the
+                    # supervisor's unsafe prompt then waited for the slower QA-flag detector).
+                    db.kv_set(f"prompt_probe:{wf}", [])
+                    if r["pass_rate"] < thr and not inc_open:
+                        self._open_incident(wf, prompt, now, {"trigger": "validation_probe", "validation": r,
+                                                              "threshold": thr})
+                run = self._validate(wf, spec, prompt, purpose=f"probe supervisor prompt change v{p['version']}",
+                                     persist=on_probe)
+            if run is None:   # prompt moved on, no credits, or the call failed: drop the probe as before
+                with db.tx():
+                    db.kv_set(f"prompt_probe:{wf}", [])
+            else:
+                open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state!='closed'"
+                                 " ORDER BY opened_minute DESC", (wf,))
         since = db.q1("SELECT MAX(minute) FROM config_versions WHERE wf=? AND changed_dims LIKE '%prompt_version%'",
                       (wf,))[0] or (now - 1440)
         sp = halluc_spike(db, wf, prompt, max(since, now - 1440), now, ref, self.s)

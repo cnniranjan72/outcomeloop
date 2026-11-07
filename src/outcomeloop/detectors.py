@@ -12,11 +12,12 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
 
     Caller ID is randomised per dial, so within a window every DID sees the same hour and person mix in
     expectation; comparing a DID's pickup with the pooled pickup of the other DIDs isolates the number itself.
-    Two windows: fast (6h, catches a sudden spam flag) and slow (24h, catches gradual decline). A DID is
-    degraded if either window shows ratio < 0.85 with z < -3.5 on >= 300 dials.
+    Windows: fast (6h, catches a sudden spam flag) and slow (24h, gradual decline) decide "degraded" (ratio < 0.85,
+    z < -3.5, >= 300 dials); "healthy" may also use a long 72h window so low-volume probes can complete.
     """
     out: dict[str, dict] = {}
-    windows = {"fast": s.did_fast_window_minutes, "slow": s.did_slow_window_minutes}
+    windows = {"fast": s.did_fast_window_minutes, "slow": s.did_slow_window_minutes,
+               "long": s.did_long_window_minutes}
     stats = {}
     for name, w in windows.items():
         rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
@@ -41,12 +42,14 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
             rec["windows"][name] = {"dials": n, "connected": c, "pickup": round(c / n, 4),
                                     "others_pickup": round(oc / on, 4), "ratio": round(ratio, 3), "z": round(cmp_.z, 2)}
             rec["windows"][name]["ratio_lcb"] = round(ratio - se_ratio, 3)
-            if n >= s.did_min_dials and ratio < s.did_degraded_ratio and cmp_.z < -s.did_degraded_z:
+            if name != "long" and n >= s.did_min_dials and ratio < s.did_degraded_ratio and cmp_.z < -s.did_degraded_z:
                 degraded = True
             # a number on probe only has to show it is bad to stay out (low-risk action): lower bar
-            if probing and opt in probing and n >= s.did_healthy_min_dials and ratio < s.did_degraded_ratio                     and cmp_.z < -2.33:
+            if name != "long" and probing and opt in probing and n >= s.did_healthy_min_dials \
+                    and ratio < s.did_degraded_ratio and cmp_.z < -2.33:
                 degraded = True
-            if name == "slow" and n >= s.did_healthy_min_dials and ratio - se_ratio >= s.did_degraded_ratio:
+            # healthy may use the 72h window: a 5% probe on a small workflow never reaches the minimum in 24h
+            if name in ("slow", "long") and n >= s.did_healthy_min_dials and ratio - se_ratio >= s.did_degraded_ratio:
                 healthy = True   # measured, and confidently not meaningfully worse than the other numbers
         rec["state"] = "degraded" if degraded else ("healthy" if healthy else "unknown")
         out[opt] = rec
