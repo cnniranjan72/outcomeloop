@@ -37,7 +37,7 @@
    applied.
 10. **`history_days` data reflects the business default config only.** It gives baselines, hour-of-day
     profiles and per-DID pickup. It gives no evidence on non-default variants, so dry runs for untried
-    variants say "no historical evidence" rather than extrapolating.
+    variants carry the test design (arms, planned n, achievable MDE) instead of an extrapolated lift.
 11. **Returning people keep their `person_id`** across campaigns, and their features don't change; `lead_id`
     is per campaign. Per-person counts are keyed on `person_id`, and campaign membership on `lead_id`.
 12. **Credits are one pool per scenario** (`GET /sim/state` → `credits_remaining`, 200 in public scenarios),

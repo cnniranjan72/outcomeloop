@@ -34,7 +34,11 @@ repository layer is plain SQL that ports to Postgres (which the platform already
 | Table | Purpose |
 |---|---|
 | `meta` | world fingerprint (scenario name + first history event hash), schema version |
-| `checkpoint` | last fully ingested chunk number |
+| `chunks` | the checkpoint: one row per fully ingested chunk (number, events, timing) |
+| `inbox` | side-effect events (`config_changed`, `approval_decided`) awaiting their handler; retried until done |
+| `kv` | small JSON controller memory (bootstrap, schedule, caller-ID state, locks, blacklists, holds) |
+| `codes` | string ↔ small-int dictionary for the integer-encoded call rows |
+| `campaigns` | campaign id, day, size, config version at creation |
 | `workflows` | static workflow description as returned by the API (JSON) |
 | `persons` | person_int → packed feature code (lang, tier, age, value) |
 | `leads` | lead_int → person, campaign, status (active/concluded/unreachable) |
@@ -57,7 +61,9 @@ defence.
 * A **Cohort** is `{cohort_id, where}` with the simulator's semantics (AND across features, OR within a list).
   A workflow has one ordered **CohortSet**; membership is first-match, otherwise `default`. This set is mirrored
   1:1 into `config.cohorts`, so "cohort `age_60p`" means the same leads in detection, experiments, the
-  supervisor view and the simulator's own `cohort_id` on call events (we assert agreement on ingest).
+  supervisor view and the simulator's own `cohort_id` on call events (checked daily: `check_cohort_agreement` compares our assignment with the
+  simulator's `cohort_id` on every call under our cohort set and alerts on any mismatch; 0 mismatches on 95k
+  public_02 calls).
 * **Feature slices** (`lang=ta`, `age_band=60+`, …) are *candidate generators* for heterogeneity checks; they
   are never shown as cohorts. A slice becomes a cohort only through a proposal.
 * Initial CohortSet is bootstrapped from history (C3): for each feature we measure how much the hour-of-day
@@ -75,21 +81,22 @@ thresholds for the number of looks per day.
 |---|---|---|---|---|
 | Caller-ID degraded | pickup(DID) vs pooled pickup(other DIDs), and vs the DID's own previous week | rolling 6h and 24h | 300 dials on the DID | ratio < 0.85 **and** z < −3.5 **and** (if it has a week of history) > 15 % drop vs own past, z < −3 |
 | Caller-ID healthy | same | 24h or 72h (since probe start for re-probes) | 150 dials | ratio − se ≥ 0.85 and not degraded |
-| Hallucination spike | flag rate on current prompt vs workflow's history baseline | rolling 4h / since prompt change | 250 connected | rate > 1.5× baseline **and** z > 3.5 |
+| Hallucination spike | flag rate on current prompt vs workflow's history baseline | since the last prompt change, at most 24 h | 250 connected | rate > 1.5× baseline **and** z > 3.5 |
 | KPI drift | workflow pickup / engagement, last 24h vs trailing 7d | daily | 1000 dials / 500 connected | relative drop > 5 % and z > 3 (alert only) |
-| Decay | winner-vs-holdout lift, recent 24h vs lift at promotion | hourly | 150 connected per arm | z < −2.33 vs promotion LCB80, or recent lift < 0 with z < −2.33; window 24→72h until ≥ 120 connected |
+| Decay | winner-vs-holdout lift, recent 24h vs lift at promotion | hourly | 120 connected per arm (window widened 24→72 h until reached) | z < −2.33 vs promotion LCB80, or recent lift < 0 with z < −2.33; window 24→72h until ≥ 120 connected |
 
-z = 3.5 one-sided ≈ 2.3e-4 per look; with ~48 looks/day/detector that's ≈1 % false alarms per workflow-day.
+z = 3.5 one-sided ≈ 2.3e-4 per look; decisions run hourly (~12–24 looks/day), so ≲0.5 % false alarms per workflow-day, and a flags-only alarm
+still needs validation to confirm (§8).
 
 ## 5. Experiments (C6) — welcome_message × voice
 
 * **Factorial**: both dimensions are randomised independently per dial, so each dimension's arms are compared
-  on all traffic (marginal analysis). Interaction is checked before promoting a combination (cell vs product of
-  marginals) and documented as an assumption otherwise.
+  on all traffic (marginal analysis). Interaction is **not** checked (assumption: no strong
+  welcome × voice interaction; listed as a known weakness — the data to check it is stored).
 * **Allocation**: incumbent keeps `1 − s`, challengers split `s = 0.40` evenly. (Dunnett's √k rule would give
   ~0.6 to challengers; we trade power for bounded harm — see compliance memo.)
-* **Primary metric**: the workflow's `objective.primary` if the dimension can move it, else engagement
-  (welcome/voice act after connect). **Guardrail**: the other KPI must not drop by more than the policy margin;
+* **Decision metric**: engagement, always — welcome and voice are heard only after connect, so they cannot move
+  pickup; on pickup-primary workflows this improves the guardrail KPI and the business outcome. **Guardrail**: the other KPI must not drop by more than the policy margin;
   we read `*_max_drop` as an **absolute** drop in the rate (0.02 = 2 percentage points). A change is blocked
   when the point estimate of the drop exceeds the margin, or when the drop is statistically significant
   (z > 1.645) and exceeds half the margin (assumption A-guardrail).
@@ -99,9 +106,10 @@ z = 3.5 one-sided ≈ 2.3e-4 per look; with ~48 looks/day/detector that's ≈1 %
   At the horizon the incumbent is retained ("no evidence → no change").
 * **Sequential looks**: Lan-DeMets O'Brien-Fleming spending `α(t) = 2 − 2Φ(z_{α/2}/√t)` with information fraction
   `t = n/N`; nominal level at each look = increment of spent α (Bonferroni over looks → conservative, valid).
-* **Multiple comparisons**: Holm across challengers within a dimension; separate α for each dimension.
-* **Harm stopping**: a challenger significantly worse than incumbent (z < −1.645 with ≥ 200 connected) is
-  dropped at the next proposal; dropping an arm only moves traffic back to the incumbent.
+* **Multiple comparisons**: Holm across challengers within a dimension at 80 % of the look's α; cohort-level
+  winners (Bonferroni over cohorts) at the other 20 %; separate α for each dimension.
+* **Harm stopping**: a challenger significantly worse than the incumbent is dropped — hourly at z < −2.33 (repeated
+  check), at a daily look at z < −1.645, both with ≥ 200 connected; it is blacklisted for 14 days; dropping an arm only moves traffic back to the incumbent.
 * **Cohort harm check**: before promoting, the winner is tested in every cohort of the CohortSet; a cohort where
   the winner is worse with z < −1.645 keeps the incumbent (per-cohort allocation), because "an improvement that
   hurts a cohort is worth less than nothing" (CTO).
@@ -132,8 +140,9 @@ penalty outside the preferred hour makes errors expensive).
 ## 8. Incidents — hallucination (C8)
 
 1. Detector fires (or a supervisor changes `prompt_version` → validation probe of the new prompt, 3 credits).
-2. Candidates: last known-good prompt from our own history (lowest observed flag rate with ≥ 1000 connected
-   calls) first; LLM `suggest-fixes` only if no known-good candidate passes validation (CTO: no compute that
+2. Candidates: prompts from our own history with ≥ 1000 connected calls and a flag rate ≤ 1.25× the reference,
+   ordered by observed engagement (validation measures safety only),
+   first; LLM `suggest-fixes` only if no known-good candidate passes validation (CTO: no compute that
    doesn't change a decision).
 3. Validate each candidate (`n = 300`, fewer when credits are scarce). Deterministic choice: passes policy threshold, then prefers
    observed engagement evidence, then higher pass rate.
@@ -148,9 +157,10 @@ Credit policy: an **incident reserve of 40 %** of the starting budget is untouch
 Proposal state machine (ours):
 
 ```
-DRAFT → SUBMITTING → PENDING → APPROVED → APPLYING → APPLIED → VERIFIED | ROLLED_BACK
+SUBMITTING → PENDING → APPROVED → APPLYING → APPLIED      (post-apply verification and rollback are decisions,
+                                                          not proposal states)
                  ↘ SUBMIT_FAILED      ↘ REJECTED | EXPIRED      ↘ LAPSED | STALE → (re-plan)
-AUTO: DRAFT → AUTO_APPLYING → APPLIED | AUTO_DENIED
+AUTO: AUTO_APPLYING → APPLIED | AUTO_DENIED | AUTO_FAILED;  PENDING/APPROVED → WITHDRAWN
 ```
 
 * **One open proposal per workflow.** New wants accumulate into the next batched changeset.
@@ -179,9 +189,10 @@ happened after (post-apply verification decisions).
 
 * `impact_score = clip(lift_lcb / 0.10, 0, 1) × share_affected`, where `lift_lcb` is the 80 % lower confidence
   bound of the relative primary-KPI lift from the dry run (0 for pure exploration). Exploration proposals carry a
-  fixed 0.15 (`learning`), incident fixes `max(0.8, severity)`. All components are shown in the proposal so the
+  fixed 0.15 (`learning`), validated incident fixes 0.9. All components are shown in the proposal so the
   supervisor's queue ranking is explainable.
-* `affected_leads` = active (not concluded, inside cadence) leads in the cohorts whose experience changes; for
+* `affected_leads` = active (not concluded, inside cadence) leads in the workflow (an upper bound when only some
+  cohorts change); for
   `next_campaign_only` workflows, customer-facing changes count the next campaign's expected size instead.
 * `dry_run` replays our own call history: variant changes use observed per-arm, per-cohort rates; schedule uses
   historical re-weighting at fixed per-hour volume; caller-ID uses per-DID pickup; prompts use validation runs

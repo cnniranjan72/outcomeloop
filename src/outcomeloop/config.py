@@ -49,7 +49,6 @@ class Settings:
     did_degraded_ratio: float = 0.85
     did_degraded_z: float = 3.5
     did_min_dials: int = 300
-    did_healthy_ratio: float = 0.92
     did_healthy_min_dials: int = 150
     did_probe_share: float = 0.05
     did_reprobe_share: float = 0.02     # a number that was degraded risks less traffic than an unknown one

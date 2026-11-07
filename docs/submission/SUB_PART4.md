@@ -45,6 +45,18 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
   and the incident (now one transaction); a supervisor-prompt probe was cleared before the validation call, so a
   crash forgot a pending safety check (now cleared in the same transaction as the result); and a caller-ID
   decision flaw that only showed up by comparing crashed vs clean runs (§5).
+* **Graceful shutdown.** SIGTERM/SIGINT (deploys, `docker stop`) are forwarded by `run.sh` to the controller,
+  which finishes the current step, records `controller_stop` and exits 143; `run.sh` restarts only on an
+  *unrequested* exit. Verified in a Linux container (`scripts/graceful_stop_test.sh`): SIGTERM at D4 11:15 → clean
+  stop with no proposal in an uncertain state → restart on the same DB finishes with exactly-once ingestion.
+* **Events are never dropped.** A side-effect event (`config_changed`, `approval_decided`) whose handler hits a
+  transient error is retried next tick; later events of that workflow wait, and the workflow gets no decisions
+  until its events are processed (a lost supervisor edit would mean overwriting it). Dead-lettered with an
+  audited error only after 10 attempts.
+* **Adversarial review.** An independent read-only audit of the code (fresh eyes, prompted to find crash-safety,
+  governance, statistical and performance defects) reported 20 findings; the 3 high and 8 medium ones are fixed and
+  the high ones have regression tests (e.g. a withdrawn promotion's approval was still being applied; our own
+  routine approval could make an incident fix stale; the cohort-winner family re-spent the look's α).
 * **What a crash loses.** Nothing durable. In flight at the instant of the kill: at most one HTTP response
   (reconciled on restart), and for a credit-spending call (no idempotency key in the API) up to 3 credits may be
   spent twice.

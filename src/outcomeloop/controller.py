@@ -409,10 +409,35 @@ class Controller:
             if drift["alerts"]:
                 with db.tx():
                     db.decide(now, wf, "alert", f"KPI drift: {drift['alerts']}", evidence=drift)
+            self.check_cohort_agreement(wf, cfg, now)
         self.step_experiments(wf, spec, cfg, now, ctx)
 
         desired = self.desired_config(wf, spec, cfg, dids, ctx)
         self.route(wf, spec, cur, desired, ctx)
+
+    def check_cohort_agreement(self, wf, cfg, now) -> dict | None:
+        """Daily consistency check of the shared-cohort guarantee: for calls in the last 24 h dialled under a config
+        carrying exactly our cohort set, our membership rule must assign the same cohort the simulator stamped on the
+        call. A mismatch means our cohort definition and the live one have diverged — an alert, not a guess."""
+        db = self.db
+        cohorts = load_cohorts(db, wf, ("live",))
+        if not cohorts or cfg.get("cohorts") != [c.to_config() for c in cohorts]:
+            return None
+        live_vs = [v for v, c in db.q("SELECT version, config FROM config_versions WHERE wf=? AND config IS NOT NULL",
+                                      (wf,)) if json.loads(c).get("cohorts") == cfg["cohorts"]]
+        if not live_vs:
+            return None
+        rows = db.q(f"SELECT {membership_sql(db, cohorts)}, cohort, COUNT(*) FROM calls WHERE wf=? AND minute>=?"
+                    f" AND minute<? AND cfg_ver IN ({','.join('?' * len(live_vs))}) GROUP BY 1, 2",
+                    (wf, now - 1440, now, *live_vs))
+        total = sum(n for _, _, n in rows)
+        bad = sum(n for ours, theirs, n in rows if ours != db.decode("cohort", theirs))
+        out = {"calls": total, "mismatched": bad}
+        if total and bad:
+            with db.tx():
+                db.decide(now, wf, "alert", f"cohort definitions diverged: {bad}/{total} calls assigned differently"
+                          f" by us and by the simulator", evidence=out)
+        return out
 
     # ---- bootstrap from history (C3)
     def bootstrap(self, wf: int):

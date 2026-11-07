@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Crash-recovery evidence: start the simulator, hard-kill the controller at 7 chosen moments (SIGKILL /
+# Crash-recovery evidence: start the simulator, hard-kill the controller at 9 state-targeted moments (SIGKILL /
 # TerminateProcess), restart it each time, let it finish, then verify exactly-once ingestion, no double apply,
 # no lost approvals, learning kept, run finished, and grade it.
 #   scripts/crash_recovery.sh                 # public_02_incidents on :8711

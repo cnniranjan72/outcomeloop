@@ -23,7 +23,14 @@ stateDiagram-v2
   LAPSED --> [*]
 ```
 
-Auto route: `AUTO_APPLYING → APPLIED | AUTO_DENIED (403) | AUTO_FAILED`, reconciled via
+`PENDING/APPROVED → WITHDRAWN` when we no longer want a change (e.g. a promotion whose effect faded while the
+request waited): never applied, still counted toward fatigue. **Emergency proposals apply first**; a routine
+approval waits while an emergency for the same workflow is open, so our own change cannot make the safety fix
+stale.
+
+Auto route: `AUTO_APPLYING → APPLIED | AUTO_DENIED (403) | AUTO_FAILED` — a 403 sends those dims to the approval
+route for 24 h, and a dimension last set by a supervisor is approval-only until one of our approved changes to it
+lands. Reconciled via
 `/config/history` (which records our `proposal_id`) after a timeout.
 
 **Re-proposal is a re-plan, not a resubmit.** Every decision computes the desired config from our state on
@@ -56,7 +63,7 @@ the next plan starts from fresh data and the new base (Product: expired = reject
   Kestrel (one routine request/day).
 
 ### Impact score, affected leads, dry run (how honest)
-* `impact_score = clip(lift_LCB80 / 0.10, 0, 1) × share of traffic moved`; pure exploration 0.15 (learning,
+* `impact_score = clip(lift_LCB80 / 0.10, 0, 1) × (1 − holdout share)` for a promotion; pure exploration 0.15 (learning,
   no proven lift), schedule = dry-run lift halved (the dry run is an upper bound), urgent caller-ID 0.7,
   validated safety fix 0.9. Components are in `evidence.impact_detail` so the queue order is explainable.
   It is ordinal, not a forecast.
@@ -64,8 +71,8 @@ the next plan starts from fresh data and the new base (Product: expired = reject
   `next_campaign_only` customer-facing changes, the next campaign's size (they only reach new campaigns).
 * `dry_run` replays our own recorded calls: per-arm/per-cohort observed rates (with n, z) for variants,
   historical re-weighting for schedule, per-number pickup for caller ID, validation runs + observed flag rates
-  for prompts. Each dry run states its window and known bias. For never-tried variants it says so rather than
-  extrapolating.
+  for prompts. Each dry run states its window and known bias. For an exploration (never-tried variants) the dry
+  run is the test design itself — arms, planned n and the achievable MDE — not a predicted lift.
 
 ### Supervisor edits mid-experiment
 `config_changed` with `actor: supervisor` → the changed dims are **locked for 48 h** (no proposals touch

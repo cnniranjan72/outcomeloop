@@ -63,6 +63,8 @@ itself restarts the controller if it exits abnormally.
 * **One shared object.** A cohort is `{cohort_id, where}` with the simulator's semantics; a workflow has one
   ordered cohort set, first-match, else `default`. The same set is written into `config.cohorts`, used by every
   analysis query (one SQL implementation, `membership_sql`), and shown in the supervisor view.
+  `check_cohort_agreement` verifies it daily against the `cohort_id` the simulator stamps on each call (0
+  mismatches across 95k calls on public_02).
 * **How they're formed (C3, from history).** For each lead feature we test whether its values have different
   hour-of-day pickup profiles: binomial deviance G² of `pickup ~ hour × feature` against the additive model,
   likelihood-ratio test (p < 0.001), and pick the feature with the largest G² per degree of freedom. On all
@@ -90,6 +92,10 @@ itself restarts the controller if it exits abnormally.
   connected) is dropped and blacklisted for 14 days, so exploration cost is bounded early.
 
 ### Deciding a winner
+* **Metric.** Experiments always decide on engagement: welcome and voice are heard only after connect, so they
+  cannot move pickup. On a pickup-primary workflow (`nw_kyc`) this improves the guardrail KPI and the business
+  outcome, and pickup per arm is still checked as a guardrail; the primary KPI there is moved by caller ID and
+  call-hour weights.
 * **Test.** One-sided two-proportion z-test on engagement (engaged ÷ connected) of each challenger vs the
   incumbent, using only calls that actually ran with that variant under the experiment's config versions
   (Product: only what happened counts).
@@ -99,7 +105,8 @@ itself restarts the controller if it exits abnormally.
   false-winner rate stays ≤ 0.05 across looks (Bonferroni over looks, conservative). At the horizon, if
   the best challenger trends positive, a single **pre-registered extension** doubles the horizon (half of
   the remaining α is reserved for it at the first horizon).
-* **Multiple comparisons.** Holm step-down across challengers within a dimension. Cohort-specific winners
+* **Multiple comparisons.** Each look's α is split: 80 % to Holm step-down across challengers, 20 % to the
+  cohort-level family (found by our own audit: testing both families at the full α allowed up to 2α). Cohort-specific winners
   (when there is no pooled winner) use Bonferroni across cohorts on top.
 * **Before promoting:** guardrail check (below); **cohort harm check**: any cohort where the winner is worse at
   z < −1.645 keeps the incumbent via a per-cohort allocation; **stability check**: the last-24h lift must not be

@@ -141,7 +141,7 @@ Status comes from the code in `src/outcomeloop/`, not from intent.
 | C10 | Impact score, affected leads, dry run | **Built** (simple) | Present on every proposal (`Controller.impact`, `affected_leads`, `dry_run`), each with its basis. Impact is an ordinal heuristic with fixed scores for some change types. Dry runs are our own experiment evidence or historical re-weighting, not a full replay. |
 | C11 | Consolidated supervisor view | **Partial** | CLI only: `python -m outcomeloop supervisor <wf>`. No HTTP API or UI. |
 | C12 | Queryable decision/audit store | **Built** | `decisions` table with UPDATE/DELETE blocked by triggers. CLI commands `why`, `audit`, `customer`. |
-| C13 | Crash recovery, demonstrated | **Built** | Intent rows before HTTP, reconcile on start, `run.sh` restart loop. `scripts/crash_recovery.sh` hard-kills at 7 targeted moments and verifies. |
+| C13 | Crash recovery, demonstrated | **Built** | Intent rows before HTTP, reconcile on start, `run.sh` restart loop. `scripts/crash_recovery.sh` hard-kills at 9 state-targeted moments and verifies. |
 | C14 | Observability of the loop | **Partial** | `metrics` table and `status` CLI. Alerts are audit rows. Nothing is connected to a pager or metrics backend. |
 | C15 | Fair credits / attention across tenants | **Cut** | Fatigue caps are per workflow. The credit reserve is global. There is no cross-tenant budget. |
 
@@ -902,6 +902,19 @@ What a crash can lose:
 
 Nothing that decides a config change lives only in memory.
 
+### Graceful shutdown and event retries
+
+- **SIGTERM / SIGINT** (deploys, `docker stop`): `run.sh` forwards the signal; the controller finishes the current
+  step, records `controller_stop` and exits 143. `run.sh` restarts the controller only after an *unrequested*
+  exit. Evidence: `scripts/graceful_stop_test.sh` (Linux container).
+- **Side-effect events are never dropped.** If handling a `config_changed` / `approval_decided` event fails (e.g. the
+  simulator is briefly unreachable), the event stays pending and is retried next tick; later events of the same
+  workflow wait, and `decide()` holds that workflow until its events are processed. After 10 failed attempts the
+  event is dead-lettered with an `error` decision.
+- **Emergency ordering.** Incident and urgent approvals are applied before routine ones; a routine approval waits
+  while an emergency for the same workflow is open. A proposal we no longer want (e.g. a promotion whose effect
+  faded while waiting) becomes `WITHDRAWN` and is never applied.
+
 ## Security and operational considerations
 
 - **No secrets.** The simulator API has no authentication. In production, the platform's service credentials
@@ -933,7 +946,7 @@ The `metrics` table, written by `Controller._metrics`:
 | `credits_remaining` | hourly | from `/sim/state` |
 | `open_proposals` | hourly | proposals in `PENDING` / `APPROVED` / `APPLYING` |
 | `decisions_last_hour` | hourly | audit rows written in the last sim hour |
-| `rss_mb` | hourly | peak RSS (Linux `ru_maxrss`). The Windows fallback recorded 0.0 in the public runs, so measure on Linux. |
+| `rss_mb` | hourly | peak memory (Linux `ru_maxrss`; Windows `PeakWorkingSetSize` via psapi). |
 | `wall_seconds_per_sim_day` | daily | wall clock per simulated day, including simulator time |
 | `controller_seconds_per_sim_day` | daily | ingest + decide seconds per simulated day. Labels carry the per-phase breakdown. |
 
@@ -1011,7 +1024,6 @@ What we would do:
 - **Approver identity is not exposed by the API.** "Who approved" is the approval id plus timestamps.
 - **Tenant preferences** live in a static JSON file.
 - **Single process, single SQLite writer** (see scalability).
-- **The Windows RSS metric** reads 0.0, so use Linux numbers.
 
 ## Setup
 
@@ -1130,7 +1142,7 @@ scripts/crash_recovery.sh --port 8712 --skip-grade
 ```
 
 `scripts/crash_recovery.py` starts its own simulator and launches the controller. It **hard-kills** the
-controller (`Popen.kill()`: SIGKILL on Linux, TerminateProcess on Windows) at 7 targeted moments, chosen by
+controller (`Popen.kill()`: SIGKILL on Linux, TerminateProcess on Windows) at 9 state-targeted moments, chosen by
 watching our DB read-only and the simulator API:
 
 1. (a) during history ingestion
@@ -1275,7 +1287,7 @@ What each state means:
 5. The supervisor view as an HTTP API plus the weekly change summary Compliance asked for.
 6. A slice-based heterogeneity search that proposes a refined cohort set (for example `lang = ta`).
 7. Per-person call time for people with consistent pickup history, A/B-tested against the cohort schedule.
-8. Pager integration for the signals in [Observability](#observability), and a working RSS metric on Windows.
+8. Pager integration for the signals in [Observability](#observability) (`outcomeloop alerts` already evaluates them).
 9. Impact score calibrated against realised lift.
 
 ## Assignment
