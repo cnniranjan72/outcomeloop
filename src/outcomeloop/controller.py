@@ -19,7 +19,7 @@ from pathlib import Path
 from .cohorts import Cohort, bootstrap_cohorts, load_cohorts, membership_sql, save_cohorts, schedule_weights
 from .config import Settings
 from .db import DB, dumps
-from .detectors import did_health, halluc_baseline, halluc_spike, kpi_drift
+from .detectors import did_health, did_own_past, halluc_baseline, halluc_spike, kpi_drift
 from .experiments import EXP_DIMS, Experiment, ExperimentEngine
 from .governance import Governance
 from .ingest import Ingestor
@@ -115,6 +115,7 @@ class Controller:
         self.t_start = time.time()
         self.day_wall: dict[int, float] = {}
         self.day_acc: dict[int, dict] = {}
+        self._own_past: dict[int, tuple] = {}
 
     # ------------------------------------------------------------------ world identity
     def _prepare_db(self):
@@ -394,7 +395,11 @@ class Controller:
         mem = self.db.kv_get(f"did:{wf}", {})
         probing = {d for d in opts if mem.get(d, {}).get("state", "unknown") in ("unknown", "probe")}
         since = {d: mem[d]["since"] for d in opts if mem.get(d, {}).get("state") == "probe"}
-        health = did_health(self.db, wf, opts, now, self.s, probing, since)
+        # a week-long baseline barely moves in an hour: recompute it every 6 sim hours (saves a large scan at scale)
+        key = (wf, now // 360)
+        if self._own_past.get(wf, (None,))[0] != key:
+            self._own_past[wf] = (key, did_own_past(self.db, wf, now, self.s))
+        health = did_health(self.db, wf, opts, now, self.s, probing, since, self._own_past[wf][1])
         changed = []
         for d, h in health.items():
             prev = mem.get(d, {}).get("state", "unknown")
@@ -1182,7 +1187,12 @@ def _rss_mb() -> float:
                             ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
             c = PMC()
             c.cb = ctypes.sizeof(PMC)
-            ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+            k32, psapi = ctypes.windll.kernel32, ctypes.windll.psapi
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            if not psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(c), c.cb):
+                return -1.0
             return c.PeakWorkingSetSize / 2 ** 20
         except Exception:
             return -1.0

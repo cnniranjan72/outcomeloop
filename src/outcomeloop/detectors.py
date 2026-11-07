@@ -7,7 +7,8 @@ from .stats import Prop, binom_excess, compare
 
 
 def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
-               probing: set[str] | None = None, since: dict[str, int] | None = None) -> dict[str, dict]:
+               probing: set[str] | None = None, since: dict[str, int] | None = None,
+               own_past: dict[str, tuple[int, int]] | None = None) -> dict[str, dict]:
     """Classify each caller ID as healthy (measured and fine) / degraded / unknown (not enough data).
 
     Caller ID is randomised per dial, so within a window every DID sees the same hour and person mix in
@@ -29,9 +30,8 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
         stats[name] = window(now - w)
     # each number's own recent past (the week before the slow window): a spam flag is a drop against it,
     # while volume fatigue is steady — the relative test alone cannot tell the two apart
-    rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
-                (wf, now - 7 * 1440 - s.did_slow_window_minutes, now - s.did_slow_window_minutes))
-    own_past = {db.decode("caller_id", d): (n, c) for d, n, c in rows}
+    if own_past is None:
+        own_past = did_own_past(db, wf, now, s)
     since = since or {}
     for opt in options:
         rec = {"state": "unknown", "windows": {}}
@@ -76,6 +76,13 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
         rec["state"] = "degraded" if degraded else ("healthy" if healthy else "unknown")
         out[opt] = rec
     return out
+
+
+def did_own_past(db: DB, wf: int, now: int, s: Settings) -> dict[str, tuple[int, int]]:
+    """Per-number dials/connected over the week before the slow window (the number's own baseline)."""
+    rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
+                (wf, now - 7 * 1440 - s.did_slow_window_minutes, now - s.did_slow_window_minutes))
+    return {db.decode("caller_id", d): (n, c) for d, n, c in rows}
 
 
 def halluc_baseline(db: DB, wf: int, until: int) -> dict[str, dict]:
