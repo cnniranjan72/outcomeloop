@@ -802,7 +802,10 @@ class Controller:
                 # the promotion was decided at a look but is not live yet (approval latency, stale base, rejection):
                 # re-check that the effect has not faded before we keep asking for it
                 st = self.exp._unstable(e, now, [e.winner], {e.winner: _Cmp(e.promo["default"])}, cohorts)
-                if st.get(e.winner, {}).get("unstable"):
+                w = st.get(e.winner, {})
+                # this check repeats hourly while the approval is pending: require evidence of fading (recent lift
+                # <= 0 AND significantly below the overall lift at 1 %), not merely a noisy dip on a small sample
+                if w.get("recent_lift") is not None and w["recent_lift"] <= 0                         and w.get("z_vs_overall", 0) < -self.s.decay_z:
                     with db.tx():
                         e.status, e.plan, e.promo, e.winner = "running", {"default": e.design}, {}, None
                         e.save(db, now)
