@@ -145,7 +145,11 @@ itself restarts the controller if it exits abnormally.
   (preference) or control (none); a daily look compares pickup per dial after each person became a candidate
   (z > 2.33 → expand to 90/10, z < −2.33 → stop and remove, no evidence by day 5 → stop). It only runs where
   `schedule` is auto-appliable by policy (the daily map refresh would otherwise spend the approval budget), and a
-  stop removes only the entries we wrote. Measured result: {{PTIME_RESULT}}
+  stop removes only the entries we wrote. Measured result: within a single run the daily test is
+  under-powered (public_01: |z| ≤ 1.04 over five looks, stopped on day 5 with "no evidence", preferences removed);
+  across 16 paired runs with the feature on vs off it adds **+0.93 pp** of conclusion rate (t = 2.48;
+  `reports/ablation_person_time.md`), so it stays on by default. Cost: ~10 extra auto-applied schedule refreshes
+  per run, all neutral in the grader. People returning from much older campaigns are not covered.
 * **Caller ID.** Per-dial randomisation means a number's pickup vs the pooled other numbers in the same window
   isolates the number. **Degraded** = ratio < 0.85 and z < −3.5 on ≥ 300 dials in a 6 h or 24 h window **and**,
   for a number with a week of its own history, a drop of > 15 % against that history (z < −3). The second

@@ -22,7 +22,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
    rows over sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). Hourly rollups
    (`did_hour`, `arm_hour`) are now maintained inside each chunk's ingest transaction — recomputed per touched
    workflow-hour from the call rows, so they stay exactly-once under replay — and decisions read those instead:
-   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time. Measured scaling: {{SCALE}}
+   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time. Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
 2. **One SQLite writer.** Ingest at ~50k events/s is ~3 min/day at 10× — fine — but one process serialises
    ingest and decisions. Fix: partition workflows into shards (hash of `workflow_id`), one loop + checkpoint per
    shard, on the platform's Postgres with `calls` partitioned by day.
@@ -54,6 +54,15 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
   transient error is retried next tick; later events of that workflow wait, and the workflow gets no decisions
   until its events are processed (a lost supervisor edit would mean overwriting it). Dead-lettered with an
   audited error only after 10 attempts.
+* **One controller per state file.** An exclusive OS lock on `<db>.lock` is taken before the store is opened; a
+  second controller on the same state is refused (two would duplicate submissions). Released by the OS on SIGKILL.
+* **Corrupted state.** `PRAGMA quick_check` at start-up; a damaged store is archived and rebuilt from the simulator
+  (an approval we can no longer explain is adopted as `WITHDRAWN`, never applied).
+* **Every applied change is verified 24 h later** (`post_apply_verification`: pickup and engagement before/after,
+  guardrail KPI against the policy margin, alert on breach) — the audit trail always has a "what happened next".
+* **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 32 attacks — an apply-boundary crash matrix, HTTP
+  429/5xx/truncated responses, a second controller process killed with SIGKILL, a corrupted store, null-effect and
+  strict-policy scenarios — each with what it found, the fix and the regression test.
 * **Adversarial review.** An independent read-only audit of the code (fresh eyes, prompted to find crash-safety,
   governance, statistical and performance defects) reported 20 findings; the 3 high and 8 medium ones are fixed and
   the high ones have regression tests (e.g. a withdrawn promotion's approval was still being applied; our own

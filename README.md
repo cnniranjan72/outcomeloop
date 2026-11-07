@@ -132,17 +132,17 @@ Status comes from the code in `src/outcomeloop/`, not from intent.
 | C1 | Event ingestion: backlog-safe, idempotent, restartable | **Built** | `ingest.py`. One transaction per chunk (rows + `chunks` checkpoint). `INSERT OR IGNORE` on natural keys. History backlog and live chunks go through the same path. |
 | C2 | Lead/feature joins, one shared cohort object | **Built** | Features are joined onto every `calls` row at ingest. `cohorts.membership_sql` is the single implementation of first-match membership. The same cohort set is written into `config.cohorts` and used by detectors, experiments and the supervisor view. |
 | C3 | Bootstrapping from pre-D0 history | **Built** | `Controller.bootstrap`: cohort feature by likelihood-ratio test, smoothed call-hour weights, QA-flag reference rate. Experiment baselines use the last 7 days, which include history. |
-| C4 | Call-time optimisation | **Partial** | Cohort-level `schedule.hour_weights` (`cohorts.schedule_weights`). Per-person `lead_preferred_hour` is cut: any existing entries are carried over unchanged. |
+| C4 | Call-time optimisation | **Built** | Cohort-level `schedule.hour_weights` (`cohorts.schedule_weights`) plus per-person preferred hours as a randomised, self-terminating experiment (`persontime.py`; only where `schedule` is auto-appliable). Ablation over 16 runs: +0.93 pp (`reports/ablation_person_time.md`). |
 | C5 | Caller-ID health: detect, rotate, explore | **Built** | `detectors.did_health` (fast/slow windows) and the `Controller.detect_did` state machine (healthy/degraded/probe). Equal split over healthy numbers, rest then a time-boxed 2 % re-probe, ramped auto-apply. |
 | C6 | Welcome × voice experimentation | **Built** | `experiments.py`: factorial design, planned n, O'Brien-Fleming alpha spending as an explicit budget, Holm, guardrail, harm stopping, cohort harm check, stability check, one pre-registered extension. There is no welcome × voice interaction check. |
 | C7 | Promotion, decay detection, rollback | **Built** | Promotion keeps a 15 % holdout. `decay_check` compares the current lift with the 80 % LCB of the lift at promotion. Rollback goes through approval and blacklists the option for 7 days. |
 | C8 | Hallucination incident response | **Built** | Validation probe of supervisor prompt edits, two-signal confirmation for flag-rate spikes, known-good prompts first then the LLM, deterministic selection, engagement verification after apply, 40 % credit reserve. |
 | C9 | Governance client | **Built** | `governance.py`: state machine, one open proposal per workflow, submit window based on worst-case latency, fatigue cap with incident slot and tenant preferences, expired = rejection, stale = re-plan, auto-apply only for operational dims with `max_shift` ramping, reconciliation. |
 | C10 | Impact score, affected leads, dry run | **Built** (simple) | Present on every proposal (`Controller.impact`, `affected_leads`, `dry_run`), each with its basis. Impact is an ordinal heuristic with fixed scores for some change types. Dry runs are our own experiment evidence or historical re-weighting, not a full replay. |
-| C11 | Consolidated supervisor view | **Partial** | CLI only: `python -m outcomeloop supervisor <wf>`. No HTTP API or UI. |
+| C11 | Consolidated supervisor view | **Built** | `python -m outcomeloop supervisor <wf>` and the read-only HTTP front `serve-views` (`/supervisor/<wf>`, `/why/<wf>`, `/status`, `/alerts`, `/customer/<person>`). |
 | C12 | Queryable decision/audit store | **Built** | `decisions` table with UPDATE/DELETE blocked by triggers. CLI commands `why`, `audit`, `customer`. |
 | C13 | Crash recovery, demonstrated | **Built** | Intent rows before HTTP, reconcile on start, `run.sh` restart loop. `scripts/crash_recovery.sh` hard-kills at 9 state-targeted moments and verifies. |
-| C14 | Observability of the loop | **Partial** | `metrics` table and `status` CLI. Alerts are audit rows. Nothing is connected to a pager or metrics backend. |
+| C14 | Observability of the loop | **Partial** | `metrics` table, `status`, and `alerts` (paging rules evaluated from the store, exit 1 when one fires — cron/pager-ready). Not wired to a real pager. |
 | C15 | Fair credits / attention across tenants | **Cut** | Fatigue caps are per workflow. The credit reserve is global. There is no cross-tenant budget. |
 
 ## Architecture
@@ -633,6 +633,11 @@ erDiagram
   workflows ||--o{ decisions : wf
   workflows ||--o{ credits_ledger : wf
   workflows ||--o{ inbox : wf
+  workflows ||--o{ did_hour : wf
+  workflows ||--o{ arm_hour : wf
+  workflows ||--o{ ptime_members : wf
+  calls ||--o{ did_hour : "rolled up per hour"
+  calls ||--o{ arm_hour : "rolled up per hour"
   persons ||--o{ leads : person
   leads ||--o{ calls : lead
   config_versions ||--o{ calls : cfg_ver
@@ -902,6 +907,19 @@ What a crash can lose:
 
 Nothing that decides a config change lives only in memory.
 
+### One controller per state file, corrupted state, post-apply verification
+
+- **Single instance.** `InstanceLock` takes an exclusive OS lock on `<db>.lock` (fcntl / msvcrt) before the store
+  is opened; a second controller on the same state exits with an explanation instead of duplicating submissions.
+  The OS releases the lock on any exit, including SIGKILL, so crash recovery is never blocked.
+- **Corrupted state.** At start-up `PRAGMA quick_check` runs on the store; a damaged file is archived (never
+  deleted) as `*.corrupt` and the controller rebuilds from the simulator (events re-listed, approvals reconciled;
+  an approval we can no longer explain is adopted as `WITHDRAWN` and never applied). Learning state restarts.
+- **Post-apply verification.** 24 h after every applied change, `post_apply_verification` records pickup and
+  engagement 24 h before vs after and evaluates the guardrail KPI against the policy margin; a breach is an alert.
+  It is a before/after check, confounded by time — randomised comparisons (experiments, holdouts) carry the
+  effect estimates.
+
 ### Graceful shutdown and event retries
 
 - **SIGTERM / SIGINT** (deploys, `docker stop`): `run.sh` forwards the signal; the controller finishes the current
@@ -986,23 +1004,25 @@ Measured on `public_03_load` (12 workflows, about 650k dials/day, about 850k eve
 
 The report also gives per-tick p50/p95/max controller time, maximum ingest lag, DB size and the per-day table.
 
-What breaks first at 10× (about 6.5M dials/day):
+**Hourly rollups (implemented, measured).** Profiling public_03 showed decisions re-aggregating raw call rows over
+sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). `did_hour` and `arm_hour` are now
+maintained inside each chunk's ingest transaction — each touched workflow-hour is recomputed from the stored rows, so
+they stay exactly-once under replay — and decisions read them. Decide time fell from ~52–67 s to ~8–14 s per
+simulated day for ~+15 % ingest time.
 
-1. **The single SQLite writer and the single process.** Ingest is one writer and decisions run serially per
-   workflow. At 10× events, ingest time grows linearly, and decide time grows with workflows × per-workflow
-   query cost.
-2. **Per-tick query cost.** Detectors and experiment looks aggregate raw `calls` rows over windows of up to 7
-   days. These are indexed by `(wf, minute)` but still scale with volume. Hundreds of workflows × hourly
-   decisions × 24 h–7 d scans is the first CPU wall.
+**Measured scaling.** 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
+
+What breaks first at 10× (about 6.5M dials/day), from those measurements:
+
+1. **Ingest** (HTTP transfer + JSON parsing + one SQLite writer) is now the larger share and grows linearly with
+   events.
+2. **The single process** serialises ingest and decisions for every workflow.
 
 What we would do:
 
 - Partition the loop by workflow: one worker per hash shard of `workflow_id`, each with its own checkpoint and
   DB or schema. Tenants never share a worker's credit pool without a per-tenant cap.
-- Move storage to Postgres with `calls` partitioned by day, so window queries prune partitions.
-- Maintain incremental aggregates at ingest, for example (workflow, hour, cohort, variant) → dials, connected,
-  engaged, flags. Decisions then read rollups instead of raw rows. Raw rows stay for audit and the `customer`
-  query.
+- Move storage to Postgres with `calls` partitioned by day; the rollups move with it.
 - Keep the decision cadence hourly. Incidents already trigger an immediate decision.
 
 ## Limitations and trade-offs
@@ -1011,8 +1031,8 @@ What we would do:
   applies the guardrail to pickup, whatever `objective.primary` says. The margin is read from the workflow's
   guardrail. For a pickup-primary workflow (public `nw_kyc`), welcome/voice tests are therefore judged on
   engagement, and the margin from its engagement guardrail is applied to pickup.
-- **No welcome × voice interaction check.** The marginal analysis is valid for average effects, and the
-  promoted combination is assumed to be additive.
+- **Interaction is checked only where it matters most.** Before promotion the winner must also win within the
+  other dimension's dominant option (`ExperimentEngine._interaction`); a full welcome × voice model is not fitted.
 - **Subgroup effects** outside the cohort partition are found only if they show up pooled or in an existing
   cohort.
 - **Power is the binding constraint.** At about 600–1,000 connected calls a day, a 10 % MDE takes days, and
@@ -1295,7 +1315,7 @@ What each state means:
 
 1. Experiments judged on each workflow's `objective.primary` where the dimension can move it, with the
    guardrail on the other KPI.
-2. A welcome × voice interaction check before promoting a combination.
+2. A slice-based heterogeneity search that proposes a refined cohort set (effects by language when cohorts are by age).
 3. Rollup tables maintained at ingest; Postgres with daily partitions; workers sharded by workflow.
 4. Per-tenant credit and approver-attention budgets (C15).
 5. The supervisor view as an HTTP API plus the weekly change summary Compliance asked for.
