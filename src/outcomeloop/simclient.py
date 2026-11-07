@@ -34,7 +34,9 @@ class SimClient:
     def __init__(self, base_url: str, timeout: float = 120.0, retries: int = 5):
         self.base_url = base_url.rstrip("/")
         self.retries = retries
-        self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
+        # connect fast-fails (a dead simulator is noticed in seconds); reads stay long because one /sim/advance on a
+        # load-scale world legitimately takes many seconds
+        self.http = httpx.Client(base_url=self.base_url, timeout=httpx.Timeout(timeout, connect=5.0))
         self.calls = 0
         self.errors = 0
 
