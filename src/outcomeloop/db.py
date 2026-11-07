@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS decisions (
   summary TEXT, reasoning TEXT, evidence TEXT, outcome TEXT,
   proposal_id TEXT, approval_id TEXT, config_version INTEGER, experiment_id TEXT, incident_id TEXT);
 CREATE INDEX IF NOT EXISTS decisions_wf_minute ON decisions (wf, minute);
+CREATE INDEX IF NOT EXISTS decisions_minute ON decisions (minute);
+CREATE INDEX IF NOT EXISTS leads_wf_day ON leads (wf, campaign_day);
 CREATE TABLE IF NOT EXISTS metrics (
   id INTEGER PRIMARY KEY AUTOINCREMENT, minute INTEGER, wall REAL, name TEXT, value REAL, labels TEXT);
 CREATE INDEX IF NOT EXISTS metrics_name ON metrics (name, minute);

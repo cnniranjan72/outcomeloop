@@ -243,3 +243,35 @@ def test_did_target_probe_budget_is_capped(ctl):
 def test_did_target_unknown_numbers_keep_their_share(ctl):
     t = ctl.did_target(["D1", "D2", "D3"], {"D1": {"state": "healthy"}}, {"D1": 0.34, "D2": 0.33, "D3": 0.33})
     assert t == {"D1": 0.34, "D2": 0.33, "D3": 0.33}
+
+
+# ---------------------------------------------------------------- audit fix: events are never dropped on a hiccup
+def test_supervisor_event_survives_a_transient_failure_and_holds_decisions(ctl, db, monkeypatch):
+    import httpx
+    from outcomeloop.ingest import INBOX_SQL
+    from outcomeloop.db import dumps as _d
+    db.x(INBOX_SQL)
+    ctl.ing = type("Ing", (), {})()
+    ctl.ing.inbox = lambda: db.q("SELECT event_id, type, wf, minute, payload FROM inbox WHERE done=0 ORDER BY event_id")
+    ctl.ing.mark_done = lambda eid: db.x("UPDATE inbox SET done=1 WHERE event_id=?", (eid,))
+    ev = {"type": "config_changed", "workflow_id": WID, "version": 2, "actor": "supervisor",
+          "changed_dims": ["voice"], "proposal_id": None, "approval_id": None, "event_id": 7, "ts": "x"}
+    with db.tx():
+        db.x("INSERT INTO inbox (event_id, type, wf, minute, payload) VALUES (7,'config_changed',?,600,?)", (ctl.wf, _d(ev)))
+    real = ctl.sim.config
+    boom = {"n": 1}
+
+    def flaky(wid):
+        if boom["n"]:
+            boom["n"] -= 1
+            raise httpx.ConnectError("simulator briefly down")
+        return real(wid)
+    monkeypatch.setattr(ctl.sim, "config", flaky)
+    ctl.handle_inbox()
+    # not dropped: still pending, no lock lost, and the workflow is held (no decisions on a stale view)
+    assert db.q1("SELECT done FROM inbox WHERE event_id=7")[0] == 0
+    assert ctl.pending_events(ctl.wf) == 1
+    ctl.handle_inbox()                                   # simulator back: processed, lock written
+    assert db.q1("SELECT done FROM inbox WHERE event_id=7")[0] == 1
+    assert "voice" in db.kv_get(f"locks:{ctl.wf}", {})
+    assert db.kv_get(f"supervisor_dims:{ctl.wf}") == ["voice"]

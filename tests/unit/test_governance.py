@@ -358,3 +358,42 @@ def test_emergency_submit_window_uses_best_case_latency(gov):
     assert ok, why
     # an emergency still never goes to an absent approver
     assert not gov.submit_window(strict, 20 * 60, emergency=True)[0]
+
+
+# ---------------------------------------------------------------- audit fixes: emergency ordering, withdrawal
+def _submit(gov, sim, kind, now, pid, experiments=None):
+    b = body(gov, sim, now=now, pid=pid)
+    if kind == "incident":
+        b["proposed_config"]["prompt_version"] = "P3"
+    if experiments:
+        b["evidence"] = {"experiments": experiments}
+    st, resp = gov.submit(WF, WID, kind, b, now)
+    assert st == "PENDING"
+    return resp["approval_id"]
+
+
+def test_routine_approval_waits_while_an_emergency_is_open(gov, sim, db):
+    # both submitted on the same base; the routine one is approved first. Applying it would make the safety fix
+    # stale, so it must wait; the incident fix applies first.
+    a_routine = _submit(gov, sim, "routine", 600, "ol-r")
+    a_incident = _submit(gov, sim, "incident", 660, "ol-i")
+    sim.decide(a_routine, "approved")
+    gov.tick(700, {WF: spec()}, Audit())
+    assert sim.calls["apply"] == 0 and state(db, "ol-r")[0] == "APPROVED"
+    sim.decide(a_incident, "approved")
+    gov.tick(715, {WF: spec()}, Audit())
+    assert state(db, "ol-i")[0] == "APPLIED"
+    assert sim.config(WID)["config"]["prompt_version"] == "P3"
+    gov.tick(730, {WF: spec()}, Audit())
+    assert state(db, "ol-r")[0] == "STALE"          # re-planned on the new base, never forced over it
+    assert sim.calls["apply"] == 1
+
+
+def test_withdrawn_proposal_is_never_applied(gov, sim, db):
+    aid = _submit(gov, sim, "routine", 600, "ol-w", experiments={"voice": "exp-1-voice-0"})
+    assert gov.withdraw_carrying(WF, "exp-1-voice-0", 650, "effect faded") == ["ol-w"]
+    sim.decide(aid, "approved")
+    gov.tick(700, {WF: spec()}, Audit())
+    assert state(db, "ol-w")[0] == "WITHDRAWN" and sim.calls["apply"] == 0
+    assert gov.open_proposal(WF) is None            # a new plan can be proposed
+    assert gov.requests_last_24h(WF, 700) == 1      # the approver still saw it: it counts toward fatigue

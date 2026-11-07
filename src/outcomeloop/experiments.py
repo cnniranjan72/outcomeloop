@@ -104,6 +104,33 @@ class ExperimentEngine:
             out["ALL"][opt] = (a[0] + n, a[1] + k, a[2] + g)
         return out
 
+    def stratified(self, e: Experiment, since: int, until: int, inc: str, win: str, min_conn: int = 30):
+        """Winner-vs-incumbent engagement difference estimated *within* each config version and combined with
+        inverse-variance weights. Within a version both arms are randomised concurrently; pooling across versions
+        with different allocations (e.g. old campaigns still at 60/20/20 next to new ones at 85/15 under
+        next_campaign_only) mixes populations and can reverse the sign (Simpson). Returns (diff, se, n_inc, n_win)."""
+        col = "wm" if e.dim == "welcome_message" else "voice"
+        vs = e.versions or [-1]
+        rows = self.db.q(f"SELECT cfg_ver, {col}, SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<?"
+                         f" AND cfg_ver IN ({','.join('?' * len(vs))}) AND conn=1 GROUP BY 1, 2",
+                         (e.wf, since, until, *vs))
+        by: dict[int, dict[str, tuple[int, int]]] = {}
+        for v, o, k, g in rows:
+            by.setdefault(v, {})[self.db.decode(e.dim, o)] = (k, g)
+        num = W = 0.0
+        ni = nw = 0
+        for v, arms in by.items():
+            i, w = arms.get(inc, (0, 0)), arms.get(win, (0, 0))
+            if min(i[0], w[0]) < min_conn:
+                continue
+            c = compare(Prop(i[1], i[0]), Prop(w[1], w[0]))
+            num += c.diff / c.se ** 2
+            W += 1 / c.se ** 2
+            ni, nw = ni + i[0], nw + w[0]
+        if W == 0:
+            return None
+        return num / W, (1 / W) ** 0.5, ni, nw
+
     # ------------------------------------------------------------------ design
     def design(self, wf: int, dim: str, cfg: dict, options: list[str], blacklist: dict[str, int], now: int,
                p_base: float, connected_per_day: float) -> Experiment | None:
@@ -163,7 +190,10 @@ class ExperimentEngine:
         return "versions" if appended else None
 
     def _plan_live(self, e: Experiment, cfg: dict) -> bool:
+        live = {"default"} | {c["id"] for c in cfg.get("cohorts", [])}
         for scope, want in e.plan.items():
+            if scope not in live:   # cohort no longer exists (e.g. supervisor changed cohorts): nothing to wait for
+                continue
             got = (cfg["allocations"].get(scope) or {}).get(e.dim) or cfg["allocations"]["default"][e.dim]
             if not _close(got, want):
                 return False
@@ -214,7 +244,9 @@ class ExperimentEngine:
         res["alpha_look"] = float(f"{a_look:.3g}")
         e.t_prev = t_now
         e.alpha_spent += a_look
-        winners = holm({o: cmps[o].p_one_sided for o in challengers}, a_look)
+        # the look's alpha is split between the two families tested at it (pooled Holm 80 %, cohort-level 20 %),
+        # so the false-winner rate per look stays <= a_look even when the cohort family is tested too
+        winners = holm({o: cmps[o].p_one_sided for o in challengers}, 0.8 * a_look)
         # guardrail: block when the point drop exceeds the margin, or a significant drop exceeds half of it
         margin = guardrail.get("margin", 0.02)
         blocked = {o for o in winners if (-guard[o].diff > margin) or (guard[o].z < -1.645 and -guard[o].diff > margin / 2)}
@@ -232,7 +264,7 @@ class ExperimentEngine:
             res["cohort_check"] = self._cohort_plan(e, w, counts, cohorts)
             return res
         # no pooled winner: cohort-level winners (Bonferroni over cohorts) — catches effects that only exist in a cohort
-        cw = self._cohort_winners(e, counts, cohorts, a_look, challengers, margin)
+        cw = self._cohort_winners(e, counts, cohorts, 0.2 * a_look, challengers, margin)
         if cw:
             res["action"], res["cohort_winners"] = "promote_cohorts", cw
             return res
@@ -252,10 +284,14 @@ class ExperimentEngine:
         return res
 
     def _unstable(self, e: Experiment, now: int, opts: list[str], cmps: dict, cohorts) -> dict:
-        """Recent-window check: the last 24h lift must not be significantly below the whole-window lift, and must
-        not itself be negative. Guards against promoting a variant whose effect is already wearing off."""
+        """Recent-window check: the last 24h lift must not be significantly below the lift *before* it (disjoint
+        samples, so the variance of the difference is the sum), and must not itself be negative. Guards against
+        promoting a variant whose effect is already wearing off. `cmps` is kept for callers without earlier data."""
         s = self.s
-        recent = self.arm_counts(e, since=max(e.start_minute if e.start_minute is not None else 0, now - s.decay_window_minutes), until=now)["ALL"]
+        start = e.start_minute if e.start_minute is not None else 0
+        cut = max(start, now - s.decay_window_minutes)
+        recent = self.arm_counts(e, since=cut, until=now)["ALL"]
+        before = self.arm_counts(e, since=start, until=cut)["ALL"] if cut > start else {}
         i = recent.get(e.incumbent, (0, 0, 0))
         out = {}
         for o in opts:
@@ -263,7 +299,9 @@ class ExperimentEngine:
             rec = {"recent_inc_conn": i[1], "recent_conn": w[1]}
             if min(i[1], w[1]) >= s.decay_min_connected:
                 rc = compare(Prop(i[2], i[1]), Prop(w[2], w[1]))
-                zd = (rc.diff - cmps[o].diff) / ((rc.se ** 2 + cmps[o].se ** 2) ** 0.5)
+                bi, bw = before.get(e.incumbent, (0, 0, 0)), before.get(o, (0, 0, 0))
+                ref = compare(Prop(bi[2], bi[1]), Prop(bw[2], bw[1])) if min(bi[1], bw[1]) >= s.decay_min_connected                     else cmps[o]
+                zd = (rc.diff - ref.diff) / ((rc.se ** 2 + ref.se ** 2) ** 0.5)
                 rec.update({"recent_lift": round(rc.diff, 4), "z_vs_overall": round(zd, 2)})
                 rec["unstable"] = zd < -s.harm_z or rc.diff <= 0
             out[o] = rec
@@ -374,6 +412,12 @@ class ExperimentEngine:
             rec = {"holdout_connected": i[1], "winner_connected": w[1]}
             if i[1] >= s.decay_min_connected and w[1] >= s.decay_min_connected:
                 now_c = compare(Prop(i[2], i[1]), Prop(w[2], w[1]))
+                if scope == "default" and len(e.plan) == 1:
+                    st = self.stratified(e, since, now, pr["incumbent"], pr["winner"])
+                    if st:   # per-version estimate replaces the pooled one (no Simpson mixing across versions)
+                        diff, se, _, _ = st
+                        now_c = type(now_c)(diff, now_c.rel, se, diff / se if se else 0.0, now_c.p_one_sided)
+                        rec["stratified_by_version"] = True
                 # winner's curse: a lift measured at the moment it first crossed a significance boundary is biased
                 # upward, so compare against its 80% lower confidence bound, not its point estimate
                 promo_ref = pr["diff"] - z_of(0.2) * pr["se"]

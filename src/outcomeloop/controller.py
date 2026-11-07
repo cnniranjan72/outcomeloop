@@ -275,7 +275,13 @@ class Controller:
 
     # ------------------------------------------------------------------ events
     def handle_inbox(self):
+        """Process side-effect events in event_id order. A failed event is retried next tick (not dropped: a lost
+        supervisor edit would mean overwriting it); later events of the same workflow wait behind it, and decide()
+        holds that workflow until its events are processed. Dead-lettered (audited) only after 10 attempts."""
+        blocked: set[int] = set()
         for event_id, typ, wf, minute, payload in self.ing.inbox():
+            if wf in blocked:
+                continue
             ev = json.loads(payload)
             try:
                 self._handle_one(event_id, typ, wf, minute, ev)
@@ -283,8 +289,17 @@ class Controller:
                 self.db.rollback()
                 log.exception("event %s failed", event_id)
                 with self.db.tx():
-                    self.db.decide(minute, wf, "error", f"event {event_id} ({typ}) handler failed: {e}")
-                    self.ing.mark_done(event_id)
+                    n = self.db.kv_get(f"inbox_attempts:{event_id}", 0) + 1
+                    self.db.kv_set(f"inbox_attempts:{event_id}", n)
+                    if n >= 10:
+                        self.db.decide(minute, wf, "error", f"event {event_id} ({typ}) dead-lettered after {n}"
+                                       f" attempts: {e}", reasoning="needs a human: the event could not be processed")
+                        self.ing.mark_done(event_id)
+                    else:
+                        blocked.add(wf)
+
+    def pending_events(self, wf: int) -> int:
+        return self.db.q1("SELECT COUNT(*) FROM inbox WHERE done=0 AND wf=?", (wf,))[0]
 
     def _handle_one(self, event_id, typ, wf, minute, ev):
         with self.db.tx():
@@ -298,6 +313,15 @@ class Controller:
 
     def _on_config_changed(self, wf: int, ev: dict, minute: int):
         actor, ver, dims = ev["actor"], ev["version"], ev.get("changed_dims") or []
+        if actor == "supervisor" and minute >= 0:
+            # a dimension a supervisor set stays approval-only (never auto-applied over) until one of our approved
+            # changes to it is applied
+            sup = set(self.db.kv_get(f"supervisor_dims:{wf}", []))
+            self.db.kv_set(f"supervisor_dims:{wf}", sorted(sup | set(dims)))
+        elif actor == "controller_approved" and minute >= 0:
+            sup = set(self.db.kv_get(f"supervisor_dims:{wf}", []))
+            if sup & set(dims):
+                self.db.kv_set(f"supervisor_dims:{wf}", sorted(sup - set(dims)))
         cur = self.sim.config(self.specs[wf]["workflow_id"])
         if cur["version"] == ver:
             self.db.x("UPDATE config_versions SET config=? WHERE wf=? AND version=?", (dumps(cur["config"]), wf, ver))
@@ -336,7 +360,7 @@ class Controller:
         # incidents waiting on a prompt fix
         for iid, data in self.db.q("SELECT incident_id, data FROM incidents WHERE wf=? AND state='proposed'", (wf,)):
             d = json.loads(data)
-            if cur["config"]["prompt_version"] == d.get("fix_prompt"):
+            if (ev.get("proposal_id") and ev.get("proposal_id") == d.get("proposal_id")) or                     ("prompt_version" in dims and cur["config"]["prompt_version"] == d.get("fix_prompt")):
                 d["applied_minute"] = minute
                 self.db.x("UPDATE incidents SET state='verifying', data=? WHERE incident_id=?", (dumps(d), iid))
                 self.db.decide(minute, wf, "incident_fix_applied", f"{iid}: prompt {d['fix_prompt']} live (v{ver})",
@@ -368,6 +392,9 @@ class Controller:
         spec = self.specs[wf]
         now = self.now
         db = self.db
+        if self.pending_events(wf):
+            self._hold(wf, "unprocessed events for this workflow (retrying); no decisions on a stale view")
+            return
         if not db.kv_get(f"boot:{wf}"):
             self.bootstrap(wf)
         cur = self.sim.config(spec["workflow_id"])
@@ -500,6 +527,17 @@ class Controller:
         prompt = cfg["prompt_version"]
         open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state NOT IN ('closed')"
                          " ORDER BY opened_minute DESC", (wf,))
+        if open_inc:
+            d0 = json.loads(open_inc[2])
+            if prompt not in (d0.get("bad_prompt"), d0.get("fix_prompt")):
+                # someone (a supervisor) shipped a different prompt: this incident no longer describes what is live.
+                # Close it so the new prompt is probed and judged on its own evidence.
+                with db.tx():
+                    db.x("UPDATE incidents SET state='closed', closed_minute=? WHERE incident_id=?", (now, open_inc[0]))
+                    db.decide(now, wf, "incident_superseded", f"{open_inc[0]}: live prompt is now {prompt} (not"
+                              f" {d0.get('bad_prompt')} or our fix {d0.get('fix_prompt')}) — closed as superseded",
+                              incident_id=open_inc[0])
+                open_inc = None
         # probe a supervisor's new prompt with a validation run (3 credits): earliest population evidence
         probes = db.kv_get(f"prompt_probe:{wf}", [])
         if probes:
@@ -559,8 +597,13 @@ class Controller:
                 # second, independent evidence source before touching a customer-facing script: QA flags are a
                 # noisy detector, a validation run measures the prompt itself (3 credits)
                 thr = spec["governance"].get("min_validation_pass_rate", 0.97)
-                run = self._validate(wf, spec, d["bad_prompt"], purpose=f"confirm {iid}")
-                d["confirmation"] = run
+
+                def keep_conf(r):   # inside the ledger transaction: a paid confirmation is never re-bought
+                    d["confirmation"] = r
+                    db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
+                run = self._validate(wf, spec, d["bad_prompt"], purpose=f"confirm {iid}", persist=keep_conf)
+                if run is None:
+                    return   # no second signal yet (credits, transport): retry next tick, never act on flags alone
                 se = (run["pass_rate"] * (1 - run["pass_rate"]) / run["n"]) ** 0.5 if run else 0
                 # the production detector has already fired: only a clearly safe validation (>= threshold + 1 SE)
                 # vetoes it; a result inside the noise band of the threshold gives the benefit of the doubt to safety
@@ -618,7 +661,14 @@ class Controller:
         elif state == "proposed":
             pid = d.get("proposal_id")
             st = db.q1("SELECT state FROM proposals WHERE proposal_id=?", (pid,))
-            if st and st[0] in ("REJECTED", "EXPIRED", "LAPSED", "STALE", "SUBMIT_FAILED"):
+            if st and st[0] == "APPLIED":
+                applied = db.q1("SELECT updated_minute FROM proposals WHERE proposal_id=?", (pid,))[0]
+                with db.tx():
+                    d["applied_minute"] = applied
+                    db.x("UPDATE incidents SET state='verifying', data=? WHERE incident_id=?", (dumps(d), iid))
+                    db.decide(now, wf, "incident_fix_applied", f"{iid}: fix proposal {pid} applied", incident_id=iid,
+                              proposal_id=pid)
+            elif st and st[0] in ("REJECTED", "EXPIRED", "LAPSED", "STALE", "SUBMIT_FAILED", "WITHDRAWN"):
                 with db.tx():
                     db.x("UPDATE incidents SET state='fix_ready' WHERE incident_id=?", (iid,))
                     db.decide(now, wf, "incident_repropose", f"{iid}: fix proposal {pid} {st[0]} — re-proposing",
@@ -722,6 +772,9 @@ class Controller:
                     cands = [(x["prompt_version"], "llm") for x in r["suggestions"] if x["prompt_version"] not in tried]
                 except (ApiError, Uncertain) as e:
                     log.error("llm call failed: %s", e)
+                    with db.tx():
+                        db.x("UPDATE credits_ledger SET state=?, response=? WHERE id=?",
+                             ("failed" if isinstance(e, ApiError) else "uncertain", str(e), lid))
         best = None
 
         def keep(run, p, src):
@@ -832,6 +885,8 @@ class Controller:
                     with db.tx():
                         e.status, e.plan, e.promo, e.winner = "running", {"default": e.design}, {}, None
                         e.save(db, now)
+                        wd = self.gov.withdraw_carrying(wf, e.experiment_id, now, "promotion withdrawn: effect faded")
+                        st["withdrawn_proposals"] = wd
                         db.decide(now, wf, "promotion_withdrawn", f"{dim}: pending promotion withdrawn — the effect"
                                   f" has faded in the last 24 h; the test continues", evidence=st,
                                   experiment_id=e.experiment_id,
@@ -912,8 +967,17 @@ class Controller:
             cur = cfg["allocations"]["default"]["caller_id"]
             tgt = self.did_target(spec["options"]["caller_id"], dids, cur)
             removing_bad = any(dids.get(d, {}).get("state") == "degraded" and w > 0 for d, w in cur.items())
+            changed = False
             if tv_distance(cur, tgt) >= self.s.did_min_tv_change or removing_bad:
                 new["allocations"]["default"]["caller_id"] = tgt
+                changed = True
+            # a cohort-level caller-ID override that still dials a degraded number gets the same target
+            for scope, dims_ in new["allocations"].items():
+                if scope != "default" and "caller_id" in dims_ and any(
+                        dids.get(d, {}).get("state") == "degraded" and w > 0 for d, w in dims_["caller_id"].items()):
+                    dims_["caller_id"] = dict(tgt)
+                    removing_bad = changed = True
+            if changed:
                 comps["caller_id"] = {"summary": "caller IDs: " + ", ".join(f"{d} {w:.0%}" for d, w in sorted(tgt.items())),
                                       "health": ctx["evidence"].get("caller_id"), "urgent": removing_bad}
         live_ids = {c["id"] for c in new.get("cohorts", [])}
@@ -922,6 +986,12 @@ class Controller:
                 continue
             plan = e.design if e.status in ("designed", "running") else e.plan
             plan = {"default": plan} if e.status in ("designed", "running") else plan
+            if e.status in ("designed", "running"):
+                # a cohort-level override of the same dimension would give the arms different cohort mixes in the
+                # pooled comparison; the test runs on one allocation for everyone (sent via approval, never silent)
+                for scope in list(new["allocations"]):
+                    if scope != "default" and dim in new["allocations"][scope]:
+                        new["allocations"][scope].pop(dim)
             for scope, dist in plan.items():
                 if scope != "default" and scope not in live_ids:
                     continue
@@ -934,7 +1004,7 @@ class Controller:
                     f"{sc}={','.join(f'{o} {w:.0%}' for o, w in sorted(d.items()))}" for sc, d in plan.items()),
                     "experiment_id": e.experiment_id, "status": e.status, "evidence": e.looks[-1] if e.looks else
                     {"design": e.design, "n_plan": e.n_plan, "achieved_mde": e.achieved_mde}}
-        if ctx.get("prompt_fix") and "prompt_version_fix" not in locks:
+        if ctx.get("prompt_fix"):   # deliberately overrides a supervisor lock: always via an approval that says so
             iid, d = ctx["prompt_fix"]
             new["prompt_version"] = d["fix_prompt"]
             comps["prompt_version"] = {"summary": f"revert unsafe prompt {d['bad_prompt']} -> {d['fix_prompt']}",
@@ -954,6 +1024,8 @@ class Controller:
         open_p = self.gov.open_proposal(wf)
         prompt_fix = "prompt_version" in dims
         did_urgent = bool(comps.get("caller_id", {}).get("urgent"))
+        if any(e.status == "rolling_back" for e in Experiment.load_active(db, wf).values()):
+            ctx["urgent"] = True   # moving off a variant that stopped working stays urgent until it is live
 
         # 1) prompt incident: a focused approval request (prompt only), emergency slot
         if prompt_fix:
@@ -971,8 +1043,12 @@ class Controller:
             desired = copy.deepcopy(desired)
             desired["prompt_version"] = cfg["prompt_version"]
 
+        denied = {d for d, until in db.kv_get(f"auto_denied:{wf}", {}).items() if until > now}
+        supervisor_set = set(db.kv_get(f"supervisor_dims:{wf}", []))
         auto_ok_dims = {d for d in dims if pol.get("enabled") and d in pol.get("allowed_dims", [])
-                        and d not in self.s.customer_facing_dims and d != "cohorts"}
+                        and d not in self.s.customer_facing_dims and d != "cohorts"
+                        and d not in denied                 # a 403 sends the dim to the approval route for 24h
+                        and d not in supervisor_set}        # never auto-apply over a supervisor's choice
         approval_dims = [d for d in dims if d not in auto_ok_dims]
 
         # 2) urgent operational fix (degraded caller ID) via auto-apply, ramped within max_shift
@@ -1035,8 +1111,11 @@ class Controller:
                 return False
             a = cfg["allocations"]["default"]["caller_id"]
             b = step["allocations"]["default"]["caller_id"]
-            mix = {k: a.get(k, 0) + (b.get(k, 0) - a.get(k, 0)) * frac * 0.999 for k in set(a) | set(b)}
-            step["allocations"]["default"]["caller_id"] = {k: round(v, 4) for k, v in mix.items() if v > 1e-4}
+            for margin in (0.98, 0.95, 0.9, 0.8):   # rounding + canonicalisation must not push past max_shift
+                mix = {k: a.get(k, 0) + (b.get(k, 0) - a.get(k, 0)) * frac * margin for k in set(a) | set(b)}
+                step["allocations"]["default"]["caller_id"] = {k: round(v, 4) for k, v in mix.items() if v > 1e-4}
+                if max_shift(cfg, canonical_config(cfg, step)) <= ms - 1e-6:
+                    break
             ramp = {"target": b, "fraction": round(frac, 3)}
             shift = max_shift(cfg, step)
         comps = {}
@@ -1045,11 +1124,16 @@ class Controller:
                 "rationale": self._rationale(wf, cfg, step, urgent),
                 "evidence": {"caller_id": self.db.kv_get(f"did:{wf}"), "ramp": ramp,
                              "schedule_dry_run": (self.db.kv_get(f"schedule:{wf}") or {}).get("dry_run")}}
-        state, resp = self.gov.auto_apply(wf, spec["workflow_id"], "urgent" if urgent else "operational", body, self.now)
+        day_key = f"ramp:{wf}:{self.now // 1440}"
+        state, resp = self.gov.auto_apply(
+            wf, spec["workflow_id"], "urgent" if urgent else "operational", body, self.now,
+            on_applied=lambda: self.db.kv_set(day_key, self.db.kv_get(day_key, 0.0) + shift))   # same tx as APPLIED
         with self.db.tx():
-            if state == "APPLIED":
-                self.db.kv_set(f"ramp:{wf}:{self.now // 1440}",
-                               self.db.kv_get(f"ramp:{wf}:{self.now // 1440}", 0.0) + shift)
+            if state == "AUTO_DENIED":
+                den = self.db.kv_get(f"auto_denied:{wf}", {})
+                for d in changed_dims(cfg, step):
+                    den[d] = self.now + 1440
+                self.db.kv_set(f"auto_denied:{wf}", den)
             self.db.decide(self.now, wf, "auto_apply", f"auto-apply {changed_dims(cfg, step)} -> {state}"
                            + (f" (ramp {ramp['fraction']:.0%} of the way)" if ramp else ""),
                            reasoning=body["rationale"], evidence={"response": resp, "shift": round(shift, 3),

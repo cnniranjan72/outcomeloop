@@ -3,6 +3,7 @@
 Proposal states (ours):
   approval route: SUBMITTING → PENDING → APPROVED → APPLYING → APPLIED
                       ↘ SUBMIT_FAILED   ↘ REJECTED | EXPIRED    ↘ LAPSED | STALE
+                  PENDING/APPROVED → WITHDRAWN (we no longer want it; never applied, still counts toward fatigue)
   auto route:     AUTO_APPLYING → APPLIED | AUTO_DENIED | AUTO_FAILED
 
 Crash-safety rule: the row (with deterministic id and full body) is committed BEFORE the HTTP call; after any
@@ -107,7 +108,8 @@ class Governance:
                       (resp["approval_id"], dumps(resp), now, pid))
         return "PENDING", resp
 
-    def auto_apply(self, wf: int, workflow_id: str, kind: str, body: dict, now: int) -> tuple[str, dict | None]:
+    def auto_apply(self, wf: int, workflow_id: str, kind: str, body: dict, now: int,
+                   on_applied=None) -> tuple[str, dict | None]:
         pid = body["proposal_id"]
         with self.db.tx():
             self.db.x("INSERT INTO proposals (proposal_id, wf, route, state, kind, base_version, body, created_minute,"
@@ -125,14 +127,20 @@ class Governance:
         with self.db.tx():
             self.db.x("UPDATE proposals SET state='APPLIED', applied_version=?, updated_minute=? WHERE proposal_id=?",
                       (resp["version"], now, pid))
+            if on_applied:
+                on_applied()
         return "APPLIED", resp
 
     # ------------------------------------------------------------------ polling / applying
     def tick(self, now: int, specs: dict[int, dict], on_change) -> None:
         """Poll every open approval; apply approved ones. on_change(kind, wf, pid, info) records audit."""
-        rows = self.db.q(f"SELECT proposal_id, wf, state, approval_id, base_version FROM proposals WHERE route='approval'"
-                         f" AND state IN ('PENDING','APPROVED','APPLYING')")
-        for pid, wf, state, aid, base in rows:
+        rows = self.db.q("SELECT proposal_id, wf, state, approval_id, base_version, kind FROM proposals WHERE"
+                         " route='approval' AND state IN ('PENDING','APPROVED','APPLYING') ORDER BY CASE kind WHEN"
+                         " 'incident' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END, created_minute")
+        # emergencies first; a routine approval waits while an emergency for the same workflow is still open, so our
+        # own routine change can never make the safety fix stale (approvals cannot be withdrawn remotely)
+        emergency_open = {wf for _, wf, _, _, _, kind in rows if kind in ("incident", "urgent")}
+        for pid, wf, state, aid, base, kind in rows:
             spec = specs[wf]
             wid = spec["workflow_id"]
             try:
@@ -158,6 +166,12 @@ class Governance:
                     self._set(pid, "LAPSED", now, approval=ap)
                     on_change("lapsed", wf, pid, ap)
                 continue
+            if st == "approved" and kind not in ("incident", "urgent") and wf in emergency_open:
+                if state == "PENDING":
+                    with self.db.tx():
+                        self._set(pid, "APPROVED", now, approval=ap)
+                        on_change("approved", wf, pid, ap)
+                continue   # apply after the emergency (it will likely go stale and be re-planned: intended)
             if st == "approved":
                 if state == "PENDING":
                     with self.db.tx():
@@ -214,7 +228,15 @@ class Governance:
         for wf, spec in specs.items():
             for ap in self.sim.approvals(workflow_id=spec["workflow_id"]):
                 if ap["approval_id"] not in known and ap["proposal_id"].startswith("ol-"):
-                    notes.append(f"orphan approval {ap['approval_id']} for {ap['proposal_id']}")
+                    # landed remotely although our row says it did not (uncertain submit reconciled too early):
+                    # adopt it so it is applied or expires under our control and counts toward fatigue
+                    st = {"pending": "PENDING", "approved": "APPROVED", "rejected": "REJECTED", "expired": "EXPIRED",
+                          "applied": "APPLIED", "lapsed": "LAPSED"}[ap["status"]]
+                    with self.db.tx():
+                        n = self.db.x("UPDATE proposals SET state=?, approval_id=?, approval=?, updated_minute=? WHERE"
+                                      " proposal_id=?", (st, ap["approval_id"], dumps(ap), now, ap["proposal_id"])).rowcount
+                    notes.append(f"orphan approval {ap['approval_id']} for {ap['proposal_id']}: "
+                                 + (f"adopted as {st}" if n else "no local row"))
         return notes
 
     def reconcile_submitting(self, wf: int, wid: str, now: int):
@@ -254,6 +276,17 @@ class Governance:
                               (h["version"], now, pid))
                 else:
                     self._set(pid, "AUTO_FAILED", now, notes="not in config history after uncertain auto-apply")
+
+    def withdraw_carrying(self, wf: int, experiment_id: str, now: int, reason: str) -> list[str]:
+        """Withdraw our open approval requests that carry an experiment change we no longer want."""
+        out = []
+        for pid, body in self.db.q("SELECT proposal_id, body FROM proposals WHERE wf=? AND route='approval' AND state"
+                                   " IN ('PENDING','APPROVED')", (wf,)):
+            exps = (json.loads(body).get("evidence") or {}).get("experiments") or {}
+            if experiment_id in exps.values():
+                self._set(pid, "WITHDRAWN", now, notes=reason)
+                out.append(pid)
+        return out
 
     def _set(self, pid, state, now, approval=None, notes=None):
         self.db.x("UPDATE proposals SET state=?, updated_minute=?, approval=COALESCE(?, approval), notes=COALESCE(?, notes)"

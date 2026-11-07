@@ -66,6 +66,7 @@ class Ingestor:
         self.db = db
         self.sim = sim
         db.x(INBOX_SQL)
+        db.x("CREATE INDEX IF NOT EXISTS inbox_pending ON inbox (wf, event_id) WHERE done=0")
         self.features = FeatureStore(db)
         self.events_total = 0
         self.seconds_total = 0.0

@@ -52,7 +52,10 @@ def main(argv=None):
         logging.getLogger("httpx").setLevel(logging.WARNING)
         from .controller import Controller
         s = Settings.load(a.url)
-        Controller(s).run()
+        c = Controller(s)
+        c.run()
+        if c.stopping:
+            raise SystemExit(143)   # requested stop, not "scenario finished": run.sh restarts unless it asked
         return
     from . import views
     from .db import DB
