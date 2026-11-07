@@ -36,3 +36,10 @@ def test_ingest_lag_pages_only_during_dialling_hours(db):
     _chunk(db, 13 * 60)                      # 13:00: lag means the loop is blind
     db.metric(13 * 60, "ingest_lag_minutes", 120)
     assert [a["rule"] for a in views.alerts(db)[1]] == ["ingest_stalled"]
+
+
+def test_persistent_low_rate_error_on_one_workflow_pages(db):
+    _chunk(db, 600)
+    for m in (450, 500, 560):
+        db.decide(m, 3, "error", "decision step failed: KeyError")
+    assert "workflow_stuck" in {a["rule"] for a in views.alerts(db)[1]}

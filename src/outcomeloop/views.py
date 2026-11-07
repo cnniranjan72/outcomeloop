@@ -215,6 +215,12 @@ def alerts(db: DB) -> tuple[str, list[dict]]:
     if errs > 5:
         page("error_rate", f"{errs} isolated decision errors in the last sim-hour",
              "python -m outcomeloop audit --kind error")
+    # a workflow failing every hour is stuck even if the rate is low (isolation keeps the process alive, so a
+    # persistent error is otherwise silent)
+    for wf, n in db.q("SELECT wf, COUNT(*) FROM decisions WHERE kind='error' AND minute > ? GROUP BY wf", (now - 180,)):
+        if n >= 3:
+            page("workflow_stuck", f"workflow {wf}: {n} decision errors in the last 3 sim-hours",
+                 f"python -m outcomeloop audit --kind error  (wf {wf})")
     restarts = db.q1("SELECT COUNT(*) FROM decisions WHERE kind='controller_restart' AND wall > ?",
                      (last_wall - 3600,))[0]
     if restarts > 3:

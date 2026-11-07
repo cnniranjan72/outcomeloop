@@ -275,3 +275,18 @@ def test_supervisor_event_survives_a_transient_failure_and_holds_decisions(ctl, 
     assert db.q1("SELECT done FROM inbox WHERE event_id=7")[0] == 1
     assert "voice" in db.kv_get(f"locks:{ctl.wf}", {})
     assert db.kv_get(f"supervisor_dims:{ctl.wf}") == ["voice"]
+
+
+def test_pending_cohort_level_promotion_does_not_crash_decisions(ctl, db):
+    # regression: a promotion with only cohort-level winners has no "default" scope; the pending re-check used to
+    # raise KeyError('default') every hour and block all decisions for the workflow
+    from outcomeloop.experiments import Experiment
+    e = Experiment(experiment_id="exp-c", wf=ctl.wf, dim="voice", arms=["V1", "V2"], incumbent="V1",
+                   design={"V1": 0.6, "V2": 0.4}, status="promoting", start_minute=0, versions=[1])
+    e.plan = {"default": {"V1": 1.0}, "age_60p": {"V2": 0.85, "V1": 0.15}}
+    e.promo = {"age_60p": {"winner": "V2", "incumbent": "V1", "diff": 0.05, "se": 0.02}}
+    e.winner = "age_60p:V2"
+    with db.tx():
+        e.save(db, 0)
+    ctl.step_experiments(ctl.wf, ctl.specs[ctl.wf], CFG, 12 * 60, ctx())   # must not raise
+    assert Experiment.load_active(db, ctl.wf)["voice"].status == "promoting"

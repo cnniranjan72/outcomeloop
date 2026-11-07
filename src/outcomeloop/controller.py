@@ -874,7 +874,8 @@ class Controller:
                             db.decide(now, wf, "experiment_drop_arm", f"{dim}: dropping {bad} (significantly worse)",
                                       evidence={o: counts.get(o) for o in bad} | {"incumbent": inc},
                                       experiment_id=e.experiment_id)
-            elif e.status == "promoting" and e.promo and e.winner and "," not in e.winner:
+            elif e.status == "promoting" and "default" in e.promo and e.winner and ":" not in e.winner:
+                # pooled promotions only; cohort-level winners ("cohort:option") have no pooled comparison to re-check
                 # the promotion was decided at a look but is not live yet (approval latency, stale base, rejection):
                 # re-check that the effect has not faded before we keep asking for it
                 st = self.exp._unstable(e, now, [e.winner], {e.winner: _Cmp(e.promo["default"])}, cohorts)
