@@ -59,6 +59,40 @@ def changed_dims(old: dict, new: dict) -> list[str]:
     return [d for d in CHANGE_DIMS if d in ch]
 
 
+def _fixpoint(d: dict) -> dict:
+    """A distribution the governance boundary's normalisation (w / sum(w)) maps to itself bit-for-bit.
+    The boundary compares stored distributions with exact equality after re-normalising what we send, so a
+    stored dist that is not a fixed point is reported as 'changed' by every later proposal that merely copies
+    it (spurious dims -> e.g. 403 auto_apply_not_permitted)."""
+    x = {k: float(v) for k, v in d.items() if v > 0}
+    for _ in range(8):
+        s = float(sum(x.values()))
+        y = {k: v / s for k, v in x.items()}
+        if y == x:
+            return x
+        x = y
+    big = max(sorted(x), key=x.get)          # rare 2-cycle: force the sum to 1.0 through the largest weight
+    x[big] = 1.0 - sum(v for k, v in x.items() if k != big)
+    return x
+
+
+def canonical_config(old: dict, new: dict) -> dict:
+    """Copy of `new` whose allocation dists that differ from `old` are fixed points of the boundary's
+    normalisation. A dist whose effective distribution did not change is sent byte-identical to the live one."""
+    out = copy.deepcopy(new)
+    for scope, dims in out["allocations"].items():
+        for dim, dist in list((dims or {}).items()):
+            try:
+                o = _dist(old, scope, dim)
+            except KeyError:
+                o = None
+            if o is not None and tv_distance(o, dist) <= 1e-9:
+                dims[dim] = dict(o)
+            else:
+                dims[dim] = _fixpoint(dist)
+    return out
+
+
 def max_shift(old: dict, new: dict) -> float:
     keys = {"default"} | {c["id"] for c in old.get("cohorts", [])} | {c["id"] for c in new.get("cohorts", [])}
     return max((tv_distance(_dist(old, k, d), _dist(new, k, d)) for k in keys for d in AGENT_DIMS), default=0.0)
@@ -159,7 +193,13 @@ class Controller:
         while True:
             day = self.now // 1440
             self.day_wall.setdefault(day, time.time())
-            self.governance_tick()
+            try:
+                self.governance_tick()
+            except Exception as e:
+                self.db.rollback()
+                log.exception("governance tick failed")
+                with self.db.tx():
+                    self.db.decide(self.now, None, "error", f"governance tick failed: {type(e).__name__}: {e}")
             hourly = self.now % self.s.decision_every_minutes == 0
             due = sorted(self.specs) if hourly else sorted(self.urgent)
             self.urgent = set()
@@ -168,10 +208,12 @@ class Controller:
                 for wf in due:
                     try:
                         self.decide(wf)
-                    except (ApiError, Uncertain) as e:
-                        log.error("decide %s failed: %s", self.specs[wf]["workflow_id"], e)
+                    except Exception as e:   # isolate: one workflow's failure must not stop the others
+                        self.db.rollback()
+                        log.exception("decide %s failed", self.specs[wf]["workflow_id"])
                         with self.db.tx():
-                            self.db.decide(self.now, wf, "error", f"decision step failed: {e}")
+                            self.db.decide(self.now, wf, "error", f"decision step failed: {type(e).__name__}: {e}",
+                                           reasoning="isolated; the loop continues and retries next cycle")
             decide_s = time.time() - td
             ta = time.time()
             st = self._advance()
@@ -211,14 +253,24 @@ class Controller:
     def handle_inbox(self):
         for event_id, typ, wf, minute, payload in self.ing.inbox():
             ev = json.loads(payload)
-            with self.db.tx():
-                if typ == "config_changed":
-                    self._on_config_changed(wf, ev, minute)
-                elif typ == "approval_decided":
-                    self.db.decide(minute, wf, "approval_decided",
-                                   f"{ev['approval_id']} {ev['status']}", evidence=ev, actor="approver",
-                                   approval_id=ev["approval_id"], outcome=ev["status"])
-                self.ing.mark_done(event_id)
+            try:
+                self._handle_one(event_id, typ, wf, minute, ev)
+            except Exception as e:
+                self.db.rollback()
+                log.exception("event %s failed", event_id)
+                with self.db.tx():
+                    self.db.decide(minute, wf, "error", f"event {event_id} ({typ}) handler failed: {e}")
+                    self.ing.mark_done(event_id)
+
+    def _handle_one(self, event_id, typ, wf, minute, ev):
+        with self.db.tx():
+            if typ == "config_changed":
+                self._on_config_changed(wf, ev, minute)
+            elif typ == "approval_decided":
+                self.db.decide(minute, wf, "approval_decided",
+                               f"{ev['approval_id']} {ev['status']}", evidence=ev, actor="approver",
+                               approval_id=ev["approval_id"], outcome=ev["status"])
+            self.ing.mark_done(event_id)
 
     def _on_config_changed(self, wf: int, ev: dict, minute: int):
         actor, ver, dims = ev["actor"], ev["version"], ev.get("changed_dims") or []
@@ -873,7 +925,7 @@ class Controller:
             shift = max_shift(cfg, step)
         comps = {}
         body = {"proposal_id": self.gov.new_id(spec["workflow_id"], self.now), "base_version": cur["version"],
-                "proposed_config": step,
+                "proposed_config": canonical_config(cfg, step),
                 "rationale": self._rationale(wf, cfg, step, urgent),
                 "evidence": {"caller_id": self.db.kv_get(f"did:{wf}"), "ramp": ramp,
                              "schedule_dry_run": (self.db.kv_get(f"schedule:{wf}") or {}).get("dry_run")}}
@@ -935,7 +987,7 @@ class Controller:
         dry["method_note"] = ("all figures replay our own recorded calls; experiment arms only count calls that actually"
                               " ran with that variant")
         body = {"proposal_id": self.gov.new_id(spec["workflow_id"], now), "workflow_id": spec["workflow_id"],
-                "base_version": cur["version"], "proposed_config": desired,
+                "base_version": cur["version"], "proposed_config": canonical_config(cfg, desired),
                 "change_summary": summary[:300] or f"update {', '.join(dims)}",
                 "diff": diff, "affected_leads": affected, "dry_run": dry, "impact_score": round(impact, 3),
                 "rationale": self._proposal_rationale(wf, comps, dims, kind),

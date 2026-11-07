@@ -30,7 +30,8 @@ export OUTCOMELOOP_DB="state/${NAME}.db"
 rm -f "$OUTCOMELOOP_DB" "$OUTCOMELOOP_DB-wal" "$OUTCOMELOOP_DB-shm"
 START=$(date +%s)
 ./run.sh "http://127.0.0.1:${PORT}" > "runs/ctl_${NAME}.log" 2>&1
-echo "[run_scenario] controller finished in $(( $(date +%s) - START ))s"
+SECS=$(( $(date +%s) - START )); echo "$SECS" > "runs/ctl_${NAME}.secs"
+echo "[run_scenario] controller finished in ${SECS}s"
 
 "$PY" -m sim grade --run "runs/mine_${NAME}" --baseline "runs/base_${NAME}" --out "reports/${NAME}.md" > /dev/null
 echo "[run_scenario] report: reports/${NAME}.md"

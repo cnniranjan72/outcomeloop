@@ -26,4 +26,16 @@ if ! "$PY" -c "import httpx, numpy" 2>/dev/null; then
 fi
 
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-exec "$PY" -m outcomeloop run --url "$SIM_URL"
+
+# Tiny supervisor: the controller is crash-safe (durable state + reconciliation on start), so if it ever dies
+# unexpectedly we restart it against the same DB and it resumes. It exits 0 only when the scenario finished.
+MAX_RESTARTS="${OUTCOMELOOP_MAX_RESTARTS:-20}"
+for attempt in $(seq 0 "$MAX_RESTARTS"); do
+  if "$PY" -m outcomeloop run --url "$SIM_URL"; then
+    exit 0
+  fi
+  echo "[run.sh] controller exited with status $? (attempt $attempt); restarting from durable state in 5s" >&2
+  sleep 5
+done
+echo "[run.sh] giving up after $MAX_RESTARTS restarts" >&2
+exit 1
