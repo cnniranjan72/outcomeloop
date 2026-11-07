@@ -208,6 +208,29 @@ def test_decay_not_triggered_by_winners_curse_shrinkage(db, eng):
     assert sc["promotion_lcb80"] == pytest.approx(0.10 - z_of(0.2) * 0.03, abs=1e-4)
 
 
+def test_decay_not_triggered_by_noise_and_reports_what_it_could_detect(db, eng):
+    # the final public_01 run, W3 on days 5-7: holdout 467 connected at 0.512, winner 2612 at 0.498; promoted at
+    # +0.0534 (se 0.0206). A small negative difference on a thin holdout is noise, not decay.
+    arm(db, "V1", 467, 239, start=NOW - 3 * DAY, ver=3)
+    arm(db, "V2", 2612, 1301, start=NOW - 3 * DAY, ver=3)
+    e = promoted(0.0534, 0.0206)
+    e.promoted_minute = NOW - 3 * DAY
+    dc = eng.decay_check(e, NOW, [])
+    sc = dc["scopes"]["default"]
+    assert dc["decayed"] == [] and sc["z_now"] > -Settings().decay_z
+    # the audit says why: neither clause could see a drop this small on this window
+    assert sc["detectable_drop_vs_promotion"] > sc["promotion_lcb80"] - sc["lift_now"]
+    assert sc["detectable_negative_lift"] < sc["lift_now"]
+
+
+def test_genuine_decay_with_enough_holdout_is_rolled_back(db, eng):
+    # same promotion, but the holdout is large enough to see a true -6pt lift: caught by the negative-lift clause
+    arm(db, "V1", 3000, 1650, start=NOW - DAY, ver=3)    # 0.55
+    arm(db, "V2", 6000, 2940, start=NOW - DAY, ver=3)    # 0.49
+    dc = eng.decay_check(promoted(0.0534, 0.0206), NOW, [])
+    assert dc["decayed"] == ["default"] and dc["scopes"]["default"]["z_now"] < -Settings().decay_z
+
+
 def test_decay_needs_data_in_both_arms(db, eng):
     arm(db, "V2", 4000, 1000, start=NOW - DAY, ver=3)
     arm(db, "V1", 50, 40, start=NOW - DAY, ver=3)        # holdout too thin to judge

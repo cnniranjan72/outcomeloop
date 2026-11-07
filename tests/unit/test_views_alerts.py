@@ -43,3 +43,12 @@ def test_persistent_low_rate_error_on_one_workflow_pages(db):
     for m in (450, 500, 560):
         db.decide(m, 3, "error", "decision step failed: KeyError")
     assert "workflow_stuck" in {a["rule"] for a in views.alerts(db)[1]}
+
+
+def test_audit_kind_prefix_wildcard_matches_a_lifecycle_and_escapes_underscore(db):
+    for k in ("experiment_designed", "experiment_winner", "experimentXwinner", "did_health"):
+        db.decide(60, None, k, f"row {k}")
+    out = views.audit(db, None, "experiment_*", 50)
+    assert "experiment_designed" in out and "experiment_winner" in out
+    assert "experimentXwinner" not in out and "did_health" not in out       # '_' is literal, not a LIKE wildcard
+    assert views.audit(db, None, "did_health", 50).count("did_health") == 2  # exact kind unchanged (kind + summary)

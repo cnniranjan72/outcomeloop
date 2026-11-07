@@ -456,9 +456,14 @@ class ExperimentEngine:
                 # upward, so compare against its 80% lower confidence bound, not its point estimate
                 promo_ref = pr["diff"] - z_of(0.2) * pr["se"]
                 zd = (now_c.diff - promo_ref) / ((now_c.se ** 2 + pr["se"] ** 2) ** 0.5)
+                # power, recorded so "was the detector able to see it?" is answerable from the audit: the smallest
+                # true drop each clause would catch with 80% probability on this window
+                zp = s.decay_z + z_of(0.2)
                 rec.update({"lift_now": round(now_c.diff, 4), "z_now": round(now_c.z, 2),
                             "lift_at_promotion": round(pr["diff"], 4), "promotion_lcb80": round(promo_ref, 4),
-                            "z_vs_promotion": round(zd, 2)})
+                            "z_vs_promotion": round(zd, 2),
+                            "detectable_drop_vs_promotion": round(zp * (now_c.se ** 2 + pr["se"] ** 2) ** 0.5, 4),
+                            "detectable_negative_lift": round(-zp * now_c.se, 4)})
                 # both clauses at the stricter level: this check repeats hourly over overlapping windows
                 if zd < -s.decay_z or (now_c.diff < 0 and now_c.z < -s.decay_z):
                     out["decayed"].append(scope)

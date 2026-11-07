@@ -8,7 +8,6 @@ touched recently are locked so we never overwrite them silently.
 """
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import math
@@ -19,7 +18,8 @@ from pathlib import Path
 from .cohorts import Cohort, bootstrap_cohorts, load_cohorts, membership_sql, save_cohorts, schedule_weights
 from .config import Settings
 from .db import DB, dumps
-from .detectors import did_health, did_own_past, halluc_baseline, halluc_spike, kpi_drift
+from .detectors import (did_health, did_own_past, halluc_baseline, halluc_spike, incident_interaction,
+                        kpi_drift)
 from .experiments import EXP_DIMS, Experiment, ExperimentEngine
 from .instancelock import InstanceLock
 from .persontime import PersonTime
@@ -28,6 +28,13 @@ from .ingest import Ingestor
 from .simclient import ApiError, SimClient, Uncertain
 from .stats import tv_distance
 from .timeutil import minute_to_label
+
+
+
+def _clone(cfg):
+    """Deep copy of a config. Configs are plain JSON (they come from and go to the API), so a JSON round-trip is an
+    exact copy and ~1.5x faster than copy.deepcopy on a 200 KB config (measured; called a few times per workflow-hour)."""
+    return json.loads(json.dumps(cfg))
 
 log = logging.getLogger("outcomeloop")
 
@@ -81,7 +88,7 @@ def _fixpoint(d: dict) -> dict:
 def canonical_config(old: dict, new: dict) -> dict:
     """Copy of `new` whose allocation dists that differ from `old` are fixed points of the boundary's
     normalisation. A dist whose effective distribution did not change is sent byte-identical to the live one."""
-    out = copy.deepcopy(new)
+    out = _clone(new)
     for scope, dims in out["allocations"].items():
         for dim, dist in list((dims or {}).items()):
             try:
@@ -779,13 +786,19 @@ class Controller:
                 return
             ok = not v["fired"] and v["connected"] >= 100 and eng.get("checked", False)
             if ok or now - d["applied_minute"] > 1440:
+                # incident x variant: did the bad prompt hit some options harder? (randomised DiD; diagnostic)
+                v["interaction"] = incident_interaction(db, wf, d["bad_prompt"], d["applied_minute"])                     if d.get("bad_prompt") else {"checked": False, "reason": "no bad prompt recorded"}
+                ia = v["interaction"].get("interactions") or []
                 with db.tx():
                     d["verification"] = v
                     db.x("UPDATE incidents SET state=?, closed_minute=?, data=? WHERE incident_id=?",
                          ("closed", now, dumps(d), iid))
                     db.decide(now, wf, "incident_verified" if ok else "incident_closed_unverified",
                               f"{iid}: after fix flag rate {v['flag_rate']:.4f} vs ref {v['ref_rate']:.4f}"
-                              f" on {v['connected']} connected calls", evidence=v, incident_id=iid)
+                              f" on {v['connected']} connected calls; incident x variant: "
+                              + (", ".join(f"{x['dim']}={x['option']} {x['metric']} z {x['z']}" for x in ia)
+                                 if ia else ("none detected" if v["interaction"].get("tests") else "too few calls to test")),
+                              evidence=v, incident_id=iid)
         elif state == "fix_ready":
             if cfg["prompt_version"] == d.get("fix_prompt"):
                 with db.tx():
@@ -1046,6 +1059,20 @@ class Controller:
                                             " promotion (z<-2.33) or significantly negative")
                     ctx["kinds"].append("decay_rollback")
                     ctx["urgent"] = True
+                elif now % 1440 == self.s.decay_report_minute:
+                    # daily audit of a check that passed: shows the detector is live and what it could have seen
+                    sc = next(iter(dc["scopes"].values()), {})
+                    if "lift_now" in sc:
+                        txt = (f"lift now {sc['lift_now']:+.3f} (z {sc['z_now']}), z vs promotion {sc['z_vs_promotion']};"
+                               f" detectable drop {sc['detectable_drop_vs_promotion']:.3f}")
+                    else:
+                        txt = (f"holdout too thin to judge ({sc.get('holdout_connected', 0)} connected calls,"
+                               f" need {self.s.decay_min_connected})")
+                    with db.tx():
+                        db.decide(now, wf, "decay_check", f"{dim}: winner holds — {txt}", evidence=dc,
+                                  experiment_id=e.experiment_id,
+                                  reasoning="no decay at z<-2.33; detectable_* fields give the smallest true drop each"
+                                            " clause would catch with 80% probability on this window")
 
     def _blacklist(self, wf: int, opts: list[str], days: float | None = None):
         """Options we have evidence against are not re-tested for a while: 7 days after a decay rollback,
@@ -1090,7 +1117,7 @@ class Controller:
     def desired_config(self, wf, spec, cfg, dids, ctx) -> dict:
         db = self.db
         locks = ctx["locks"]
-        new = copy.deepcopy(cfg)
+        new = _clone(cfg)
         comps = ctx.setdefault("components", {})
         cohorts = load_cohorts(db, wf, ("proposed", "live"))
         ours = [c.to_config() for c in cohorts]
@@ -1112,7 +1139,7 @@ class Controller:
             lph = {k: v for k, v in cur_lph.items() if k not in mine}
             if pm["status"] in ("testing", "expanded"):
                 lph.update(pm["map"])
-            sched = new.setdefault("schedule", copy.deepcopy(cfg["schedule"]))
+            sched = new.setdefault("schedule", _clone(cfg["schedule"]))
             if lph != cur_lph:
                 sched["lead_preferred_hour"] = lph
                 comps.setdefault("schedule", {"summary": "", "dry_run": None})
@@ -1185,7 +1212,7 @@ class Controller:
 
         # 1) prompt incident: a focused approval request (prompt only), emergency slot
         if prompt_fix:
-            fix_cfg = copy.deepcopy(cfg)
+            fix_cfg = _clone(cfg)
             fix_cfg["prompt_version"] = desired["prompt_version"]
             if open_p is None or open_p[2] != "incident":
                 ok, why = self.gov.submit_window(spec, now, emergency=True)
@@ -1196,7 +1223,7 @@ class Controller:
                     return
                 self._hold(wf, f"prompt fix waiting: {why if not ok else why2}")
             dims = [d for d in dims if d != "prompt_version"]
-            desired = copy.deepcopy(desired)
+            desired = _clone(desired)
             desired["prompt_version"] = cfg["prompt_version"]
 
         denied = {d for d, until in db.kv_get(f"auto_denied:{wf}", {}).items() if until > now}
@@ -1240,7 +1267,7 @@ class Controller:
     def _auto_step(self, wf, spec, cur, desired, dims, urgent) -> bool:
         cfg = cur["config"]
         pol = spec["governance"]["auto_apply"]
-        step = copy.deepcopy(cfg)
+        step = _clone(cfg)
         for d in dims:
             if d == "schedule":
                 if desired.get("cohorts") != cfg.get("cohorts"):

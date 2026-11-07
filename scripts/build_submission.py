@@ -211,7 +211,7 @@ def main():
         "{{TESTS}}": tests_line,
         "{{ROBUST_TABLE}}": robust_table, "{{ROBUST_NOTES}}": robust_notes,
         "{{ROBUST_HEADLINE}}": robust_headline,
-        "{{DATE}}": "2026-11-07", "{{NAME}}": "[YOUR NAME]", "{{HOURS}}": "[FILL IN]",
+        "{{DATE}}": "2026-11-07", "{{NAME}}": "NIRANJAN C N", "{{HOURS}}": "14.5",
     }
     for k, v in fills.items():
         doc = doc.replace(k, v)

@@ -130,3 +130,65 @@ def kpi_drift(db: DB, wf: int, now: int, s: Settings) -> dict:
         if en.rel < -s.drift_rel and en.z < -s.drift_z:
             out["alerts"].append("engagement_drop")
     return out
+
+
+def incident_interaction(db: DB, wf: int, bad_prompt: str, until: int, min_connected: int = 150,
+                         alpha: float = 0.05) -> dict:
+    """Did the bad prompt hurt some variant options more than others (incident x variant interaction)?
+
+    Welcome message, voice and caller ID are randomised per dial both before and during a prompt incident, so for
+    each option o of a dimension, (rate during - rate before) for o minus the same change for all other options is a
+    randomised difference-in-differences: anything that moved every option alike (time of day, campaign mix, the
+    prompt's main effect) cancels. Tested for the QA flag rate and for engagement, two-sided, Bonferroni across all
+    option x metric tests; an option needs `min_connected` connected calls in each of the four cells.
+
+    Diagnostic only: the fix (reverting the prompt) is workflow-wide either way. A detected interaction means
+    experiment data from the incident window is not comparable across arms, which the audit then says.
+    Limit: the "before" window is the 24 h before the first call on the bad prompt; the during window ends at the
+    fix. Short incidents rarely reach the sample floor, and that is reported, not hidden."""
+    from .stats import z_of
+    pc = db.code("prompt_version", bad_prompt)
+    first = db.q1("SELECT MIN(minute) FROM calls WHERE wf=? AND prompt=? AND minute<?", (wf, pc, until))[0]
+    if first is None:
+        return {"checked": False, "reason": "no calls on the incident prompt"}
+    lo = first - 1440
+    names = {}
+    for (kind, value), c in db._codes.items():
+        names[(kind, c)] = value
+    tests, out = [], {"checked": True, "window_before": [lo, first], "window_during": [first, until], "dims": {},
+                      "interactions": []}
+    for dim, col in (("welcome_message", "wm"), ("voice", "voice"), ("caller_id", "did")):
+        rows = db.q(f"SELECT {col}, prompt=?, COUNT(*), SUM(flag), SUM(eng) FROM calls WHERE wf=? AND conn=1 AND"
+                    " ((minute>=? AND minute<? AND prompt!=?) OR (minute>=? AND minute<? AND prompt=?)) GROUP BY 1, 2",
+                    (pc, wf, lo, first, pc, first, until, pc))
+        cells: dict[int, dict[int, tuple[int, int, int]]] = {}
+        for opt, during, n, f, e in rows:
+            cells.setdefault(opt, {})[during] = (n, f or 0, e or 0)
+        if len(cells) < 2:
+            continue
+        tot = {d: tuple(sum(cells[o].get(d, (0, 0, 0))[i] for o in cells) for i in range(3)) for d in (0, 1)}
+        recs = {}
+        for opt, c in sorted(cells.items()):
+            b, d = c.get(0, (0, 0, 0)), c.get(1, (0, 0, 0))
+            rb = tuple(tot[0][i] - b[i] for i in range(3))
+            rd = tuple(tot[1][i] - d[i] for i in range(3))
+            name = names.get((dim, opt), str(opt))
+            if min(b[0], d[0], rb[0], rd[0]) < min_connected:
+                recs[name] = {"insufficient": True, "connected": [b[0], d[0]]}
+                continue
+            rec = {"connected": [b[0], d[0]]}
+            for metric, i in (("flag", 1), ("engagement", 2)):
+                p = [x[i] / x[0] for x in (d, b, rd, rb)]
+                did = (p[0] - p[1]) - (p[2] - p[3])
+                se = sum(q * (1 - q) / x[0] for q, x in zip(p, (d, b, rd, rb))) ** 0.5
+                z = did / se if se else 0.0
+                rec[metric] = {"did": round(did, 4), "z": round(z, 2)}
+                tests.append((dim, name, metric, z))
+            recs[name] = rec
+        out["dims"][dim] = recs
+    zc = z_of(alpha / 2 / max(len(tests), 1))
+    out["z_critical"] = round(zc, 2)
+    out["tests"] = len(tests)
+    out["interactions"] = [{"dim": d, "option": o, "metric": m, "z": round(z, 2)} for d, o, m, z in tests
+                           if abs(z) > zc]
+    return out

@@ -1,6 +1,7 @@
 """Adversarial tests: each one attacks a failure mode with a test double or a real process (never by modifying the
 simulator). See docs/ADVERSARIAL_TESTING.md for what each found and how it was resolved."""
 import copy
+import json
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import pytest
 
 from outcomeloop.governance import Governance
 from outcomeloop.instancelock import AlreadyRunning, InstanceLock
-from outcomeloop.simclient import SimClient, Uncertain
+from outcomeloop.simclient import ChunkReadError, SimClient, Uncertain
 
 from fakes import FakeSim
 from test_governance import CFG, WF, WID, Audit, body, spec, state
@@ -103,6 +104,29 @@ def test_orphan_approval_without_local_context_is_never_applied(gov, db):
     assert gov.requests_last_24h(WF, 715) == 1    # still counts toward the approver's budget
 
 
+def test_orphan_already_applied_is_recorded_applied_with_its_version_never_reapplied(gov, db):
+    b = body(gov, gov.sim)
+    gov.sim.request_approval(b)
+    gov.sim.decide("apr_00001", "approved")
+    gov.sim.apply(WID, "apr_00001")               # applied before the state was lost
+    applies = gov.sim.calls["apply"]
+    notes = gov.reconcile_all({WF: spec()}, 700, Audit())
+    gov.tick(715, {WF: spec()}, Audit())
+    st = state(db, b["proposal_id"])
+    assert st[0] == "APPLIED" and st[2] == gov.sim.config(WID)["version"]    # version from the config history
+    assert gov.sim.calls["apply"] == applies and any("APPLIED" in n for n in notes)
+    assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='recovery_reconcile' AND approval_id='apr_00001'")[0] == 1
+
+
+def test_orphan_rejected_is_recorded_rejected(gov, db):
+    b = body(gov, gov.sim)
+    gov.sim.request_approval(b)
+    gov.sim.decide("apr_00001", "rejected")
+    gov.reconcile_all({WF: spec()}, 700, Audit())
+    assert state(db, b["proposal_id"])[0] == "REJECTED" and gov.sim.calls["apply"] == 0
+    assert gov.requests_last_24h(WF, 715) == 1
+
+
 # ------------------------------------------------------------------ HTTP faults
 def _client(handler, retries=3):
     c = SimClient("http://sim", retries=retries)
@@ -137,19 +161,52 @@ def test_backoff_has_jitter_and_a_cap():
     assert max(SimClient._backoff(20) for _ in range(50)) <= 10.0
 
 
-def test_truncated_chunk_is_refetched_whole_never_half_ingested(monkeypatch):
-    monkeypatch.setattr("outcomeloop.simclient.time.sleep", lambda s: None)
+def test_truncated_or_short_chunk_raises_chunk_read_error():
+    truncated = b'{"type":"lead","event_id":1}\n{"type":"call","eve'
+    with pytest.raises(ChunkReadError):
+        list(_client(lambda r: httpx.Response(200, content=truncated)).iter_chunk(0))
+    # ends cleanly on a line boundary but short: only the listed event count can catch it
+    short = b'{"type":"lead","event_id":1}\n'
+    with pytest.raises(ChunkReadError):
+        list(_client(lambda r: httpx.Response(200, content=short)).iter_chunk(0, expect=2))
+    with pytest.raises(ChunkReadError):
+        list(_client(lambda r: httpx.Response(503)).iter_chunk(0))
+    assert len(list(_client(lambda r: httpx.Response(200, content=short)).iter_chunk(0, expect=1))) == 1
+
+
+@pytest.mark.parametrize("cut", ["mid_line", "line_boundary"])
+def test_partial_chunk_is_rolled_back_and_reread_whole(db, monkeypatch, cut):
+    """Chunks stream (constant memory), so atomicity comes from the chunk's transaction: a partial read keeps
+    nothing — no rows, no persons, no checkpoint — and the whole chunk is re-read and stored exactly once."""
+    from fakes import EventFactory
+    from outcomeloop.ingest import Ingestor
+    monkeypatch.setattr("outcomeloop.ingest.time.sleep", lambda s: None)
+    f = EventFactory()
+    evs = [f.lead(1, 101, 100, lang="kn"), f.call(1, 101, 110, engaged=True), f.lead(2, 102, 120),
+           f.call(2, 102, 130, connected=False)]
+    full = "".join(json.dumps(e) + "\n" for e in evs).encode()
+    lines = full.splitlines(keepends=True)
+    partial = b"".join(lines[:3]) + (lines[3][:20] if cut == "mid_line" else b"")
     n = {"i": 0}
 
     def h(req):
         n["i"] += 1
-        if n["i"] == 1:
-            content = b'{"type":"lead","event_id":1}\n{"type":"call","eve'
-        else:
-            content = b'{"type":"lead","event_id":1}\n{"type":"call","event_id":2}\n'
-        return httpx.Response(200, content=content)
-    events = list(_client(h).iter_chunk(0))
-    assert [e["event_id"] for e in events] == [1, 2] and n["i"] == 2
+        return httpx.Response(200, content=partial if n["i"] == 1 else full)
+    ing = Ingestor(db, _client(h))
+    meta = {"chunk": 0, "kind": "events", "events": 4, "first_event_id": 1, "last_event_id": 4, "until_minute": 200}
+    assert ing.ingest_chunk(meta) == 4 and n["i"] == 2
+    assert db.q1("SELECT COUNT(*) FROM calls")[0] == 2 and db.q1("SELECT COUNT(*) FROM persons")[0] == 2
+    assert db.q1("SELECT COUNT(*) FROM chunks")[0] == 1
+    assert ing.ingest_chunk(meta) == 0 and n["i"] == 2                     # checkpointed: never re-read
+
+
+def test_chunk_that_never_reads_completely_fails_loudly_and_keeps_nothing(db, monkeypatch):
+    from outcomeloop.ingest import Ingestor
+    monkeypatch.setattr("outcomeloop.ingest.time.sleep", lambda s: None)
+    ing = Ingestor(db, _client(lambda r: httpx.Response(200, content=b'{"type":"lead","eve'), retries=2))
+    with pytest.raises(ChunkReadError):
+        ing.ingest_chunk({"chunk": 0, "kind": "events", "events": 1})
+    assert db.q1("SELECT COUNT(*) FROM chunks")[0] == 0
 
 
 def test_unexpected_503_on_write_is_uncertain_not_failure():

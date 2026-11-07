@@ -15,7 +15,7 @@ import time
 import numpy as np
 
 from .db import DB, dumps
-from .simclient import SimClient
+from .simclient import ChunkReadError, SimClient
 from .timeutil import ts_to_minute
 
 log = logging.getLogger("outcomeloop.ingest")
@@ -54,8 +54,19 @@ class FeatureStore:
     def __init__(self, db: DB):
         self.db = db
         self.arr: dict[int, np.ndarray] = {}
-        for wf, person, lang, tier, age, val in db.q("SELECT wf, person, lang, tier, age, val FROM persons"):
+        # arrays sized once from MAX(person); rows streamed from the cursor, never materialised as a list
+        # (1.7M persons on public_03: a fetchall() alone peaked at ~250 MB)
+        for wf, mx in db.q("SELECT wf, MAX(person) FROM persons GROUP BY wf"):
+            self.arr[wf] = np.full(max(1024, (mx + 1) * 2), -1, dtype=np.int32)
+        for wf, person, lang, tier, age, val in db.conn.execute("SELECT wf, person, lang, tier, age, val FROM persons"):
             self._set(wf, person, lang, tier, age, val)
+
+    def forget(self, rows: list[tuple]) -> None:
+        """Undo `_set` for persons first seen in a transaction that rolled back."""
+        for wf, person, *_ in rows:
+            a = self.arr.get(wf)
+            if a is not None and person < len(a):
+                a[person] = -1
 
     def _set(self, wf, person, lang, tier, age, val):
         a = self.arr.get(wf)
@@ -117,26 +128,47 @@ class Ingestor:
         return n
 
     def ingest_chunk(self, meta: dict) -> int:
-        try:
-            return self._ingest_chunk(meta)
-        except BaseException:
-            # the transaction rolled back: persons first seen in this chunk were not persisted, so the in-memory
-            # feature store must forget them too (else a retry would skip their `persons` rows)
-            self.features = FeatureStore(self.db)
-            raise
+        """Ingest one chunk in one transaction. An incomplete read (ChunkReadError) rolls back and re-reads the
+        whole chunk, bounded; any other error propagates. Either way nothing of a failed attempt is kept."""
+        retries = getattr(self.sim, "retries", 3)
+        for attempt in range(retries + 1):
+            self._new_persons: list[tuple] = []
+            try:
+                return self._ingest_chunk(meta)
+            except ChunkReadError as e:
+                self._rolled_back()
+                if attempt == retries:
+                    raise
+                d = SimClient._backoff(attempt)
+                log.warning("%s; re-reading the whole chunk in %.1fs", e, d)
+                time.sleep(d)
+            except BaseException:
+                self._rolled_back()
+                raise
+
+    def _rolled_back(self):
+        # the transaction rolled back: persons first seen in this chunk were not persisted, so the in-memory
+        # feature store must forget them too (else a retry would skip their `persons` rows)
+        self.features.forget(self._new_persons)
 
     def _ingest_chunk(self, meta: dict) -> int:
         t0 = time.perf_counter()
         db = self.db
         code = db.code
         fs = self.features
-        calls, persons, leads, concl, camps, inbox, cfgv = [], [], [], [], [], [], []
+        calls, leads, concl, camps, inbox, cfgv = [], [], [], [], [], []
+        persons = self._new_persons
         wf_codes: dict[str, int] = {}
+        # per-chunk memo of string -> code work: a chunk has ~200k calls but only a handful of distinct
+        # (welcome, voice, caller ID, prompt) combinations and cohorts. Profiled: 34M db.code() calls on public_03.
+        # Local to this attempt, so a rolled-back attempt leaves nothing behind (db.code's own cache is reloaded).
+        var_codes: dict[tuple, tuple] = {}
+        coh_codes: dict = {}
         n = 0
         with db.tx():
             if db.q1("SELECT 1 FROM chunks WHERE chunk=?", (meta["chunk"],)):
                 return 0  # already ingested (crash after commit, before caller noticed)
-            for ev in self.sim.iter_chunk(meta["chunk"]):
+            for ev in self.sim.iter_chunk(meta["chunk"], meta.get("events")):
                 n += 1
                 t = ev["type"]
                 wid = ev.get("workflow_id")
@@ -147,12 +179,19 @@ class Ingestor:
                     person = _suffix_int(ev["person_id"], ":p")
                     lang, tier, age, val = fs.get(wf, person)
                     v = ev["variant"]
+                    vk = (v["welcome_message"], v["voice"], v["caller_id"], v["prompt_version"])
+                    vc = var_codes.get(vk)
+                    if vc is None:
+                        vc = var_codes[vk] = (code("welcome_message", vk[0]), code("voice", vk[1]),
+                                              code("caller_id", vk[2]), code("prompt_version", vk[3]))
+                    ck = ev.get("cohort_id")
+                    cc = coh_codes.get(ck)
+                    if cc is None:
+                        cc = coh_codes[ck] = code("cohort", ck)
                     qa = ev.get("qa") or {}
                     minute = ts_to_minute(ev["ts"])
                     calls.append((wf, minute, ev["event_id"], person, _suffix_int(ev["lead_id"], ":l"),
-                                  ev["attempt_no"], ev["config_version"], code("cohort", ev.get("cohort_id")),
-                                  code("welcome_message", v["welcome_message"]), code("voice", v["voice"]),
-                                  code("caller_id", v["caller_id"]), code("prompt_version", v["prompt_version"]),
+                                  ev["attempt_no"], ev["config_version"], cc, *vc,
                                   int(ev["connected"]), int(ev["engaged"]), int(bool(qa.get("hallucination_flag"))),
                                   lang, tier, age, val))
                     if ev["engaged"]:

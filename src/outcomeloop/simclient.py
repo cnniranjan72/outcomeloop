@@ -31,6 +31,11 @@ class Uncertain(Exception):
     """A write whose outcome is unknown (timeout / connection drop after send). Reconcile, don't assume."""
 
 
+class ChunkReadError(Exception):
+    """A chunk could not be read completely (connection drop, malformed line, fewer events than listed, 5xx).
+    Chunks are immutable, so the caller rolls back its transaction and re-reads the whole chunk."""
+
+
 class SimClient:
     def __init__(self, base_url: str, timeout: float = 120.0, retries: int = 5):
         self.base_url = base_url.rstrip("/")
@@ -148,28 +153,33 @@ class SimClient:
         params = {k: v for k, v in (("workflow_id", workflow_id), ("status", status)) if v}
         return self._get("/approvals", **params)
 
-    def iter_chunk(self, n: int) -> Iterator[dict]:
-        """Fetch and parse a whole chunk, retried as a unit: a connection reset mid-stream or a truncated /
-        malformed line (partial response) re-fetches the chunk; nothing is yielded until it parsed completely, so a
-        caller never ingests half a chunk. Fails loudly after bounded attempts."""
+    def iter_chunk(self, n: int, expect: int | None = None) -> Iterator[dict]:
+        """Stream a chunk one event at a time (constant memory: a history chunk is 250k events, ~490 MB as parsed
+        dicts). Any incomplete read raises ChunkReadError: a connection reset mid-stream, a truncated or malformed
+        line, a 5xx, or — when `expect` (the listed event count) is given — a response that ends cleanly but short.
+        The caller consumes inside one transaction, so on ChunkReadError it rolls back and re-reads the whole
+        chunk (`Ingestor.ingest_chunk`): a chunk is never half-ingested."""
         loads = json.loads
-        for attempt in range(self.retries + 1):
-            self.calls += 1
-            try:
-                with self.http.stream("GET", f"/events/chunks/{n}") as r:
-                    if r.status_code >= 400:
-                        r.read()
-                        self._raise_for(r)
-                    events = [loads(line) for line in r.iter_lines() if line]
-                break
-            except (httpx.TransportError, ValueError) as e:
-                self.errors += 1
-                self.retried += 1
-                if attempt == self.retries:
-                    raise
-                log.warning("chunk %d fetch/parse failed (%s), retrying the whole chunk", n, e)
-                time.sleep(self._backoff(attempt))
-        yield from events
+        self.calls += 1
+        count = 0
+        try:
+            with self.http.stream("GET", f"/events/chunks/{n}") as r:
+                if r.status_code >= 400:
+                    r.read()
+                    if r.status_code >= 500 or r.status_code == 429:
+                        raise ChunkReadError(f"chunk {n}: HTTP {r.status_code}")
+                    self._raise_for(r)
+                for line in r.iter_lines():
+                    if line:
+                        ev = loads(line)
+                        count += 1
+                        yield ev
+        except (httpx.TransportError, ValueError) as e:
+            self.errors += 1
+            raise ChunkReadError(f"chunk {n}: {type(e).__name__}: {e}") from e
+        if expect is not None and count != expect:
+            self.errors += 1
+            raise ChunkReadError(f"chunk {n}: response ended after {count} events, {expect} listed")
 
     # ------------------------------------------------------------------ writes
     def advance(self, minutes: int) -> dict:

@@ -17,3 +17,6 @@ INTERVIEW_PREPARATION.md
 docs/REVIEW_GUIDE.md
 tests/scale/
 reports/public_03_load.md
+
+# demo video, subtitles, narration and render pipeline: local only, never committed
+video/

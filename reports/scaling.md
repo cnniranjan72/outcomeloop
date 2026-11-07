@@ -31,3 +31,42 @@ Reading it:
   process (one SQLite writer, decisions serial across workflows), which is what SUBMISSION §8 names as the first
   thing to change: shard workflows across processes (hash of `workflow_id`), each with its own checkpoint.
 * This is a 2-point curve on generated copies of the public workload, not a production load test.
+
+## Where the time goes (measured on the final code) and what changes first at 10×
+
+**Ingest is CPU-bound in one Python process.** `scripts/bench_ingest.py --phases` ingests the first 8 public_03
+history chunks (2,000,000 events) from a running simulator into a fresh store and attributes the time
+(12-CPU Windows laptop, simulator on the same host, two runs):
+
+| phase | share of ingest time |
+|---|---|
+| bulk inserts (`executemany` into calls / leads / persons) | 19 % |
+| hourly rollups (recomputed per touched workflow-hour) | 7–8 % |
+| commits (`synchronous=FULL`) | 4 % |
+| reading + JSON-parsing the chunk, and the per-event Python transform | 70 % |
+
+Reading and parsing alone is 1.4–4.4 s per 250k-event chunk (measured separately), so roughly half the ingest time
+is the per-event Python transform (~17 µs/event): one core, saturated. cProfile on two simulated days agrees on the
+shape (JSON decode, socket reads, then `db.code`, id parsing and feature lookups). SQLite itself is under a third.
+
+**Decisions** are about 40 % of controller time and grow with the number of workflows (serial, one workflow at a
+time). The largest single item in the profile was deep-copying a ~200 KB config several times per workflow-hour.
+
+**What we changed, and what it bought (honestly small):**
+- per-chunk memo of the string→code lookups (34 M `db.code()` calls on public_03): +1.6 % on the ingest benchmark,
+  inside run-to-run noise. Kept because it is correct, tested and removes work; not claimed as a speed-up.
+- config copies by JSON round-trip instead of `copy.deepcopy`: 3.3 ms vs 5.1 ms per copy on a real config
+  (identical result), ≈ 1 s per simulated day at 1×.
+- the memory fix (`reports/memory.md`) also made history ingest faster in the full load test.
+
+**What fails first at 10×, in order:**
+1. *Ingest CPU on one core.* ~10× the events means ~10× the per-event Python work; a single process cannot use the
+   other cores. Fix: shard workflows across processes by hash of `workflow_id` (each with its own store and
+   checkpoint; the simulator's chunk stream is read once and fanned out, or each shard filters by workflow).
+   Workflows are independent except for the shared credit budget, which becomes a small shared ledger.
+2. *Decisions serial across workflows.* Same sharding parallelises them.
+3. *SQLite single writer.* Not first: inserts + rollups + commits are under a third of ingest today. With sharding
+   each shard has its own file; Postgres with daily partitions is the step after that.
+4. *Approver attention, not compute,* limits how many changes 120 workflows can get per day (fatigue caps).
+
+Faster JSON (orjson) would cut the parse share but adds a dependency to the audited lock file; it is listed, not done.

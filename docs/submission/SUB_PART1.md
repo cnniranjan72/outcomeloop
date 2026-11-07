@@ -1,6 +1,6 @@
 # Outcome-First Agent Loop — Submission (OutcomeLoop)
 
-**Name:** {{NAME}} · **Date:** {{DATE}} · **Hours actually spent (be honest):** {{HOURS}} ·
+**Name:** {{NAME}} · **Date:** {{DATE}} · **Hours actually spent :** {{HOURS}} ·
 **Language / storage:** Python 3.12 (stdlib + `httpx`, `numpy`) / SQLite (WAL, embedded file — no service)
 
 > Repository map: controller in `src/outcomeloop/`, entry point `./run.sh <SIM_URL>`, grade reports and load /

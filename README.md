@@ -267,7 +267,6 @@ and `INSERT ... ON CONFLICT`. In production:
 │   ├── ARCHITECTURE.md, OPERATIONS.md, WALKTHROUGH.md
 │   ├── DESIGN_DECISIONS.md     # engineering spec (see ARCHITECTURE.md for where code differs)
 │   └── SIMULATOR.md            # the simulator contract (assignment)
-├── video/                      # storyboard, voice-over script, subtitles for the optional walkthrough video
 ├── sim/, scenarios/, stakeholders/, examples/, SUBMISSION_TEMPLATE.md   # assignment material, unmodified
 ├── state/                      # (git-ignored) SQLite stores, one per run
 └── runs/                       # (git-ignored) simulator run dirs and controller logs

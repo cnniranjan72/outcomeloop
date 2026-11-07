@@ -236,17 +236,33 @@ class Governance:
                         n = self.db.x("UPDATE proposals SET state=?, approval_id=?, approval=?, updated_minute=? WHERE"
                                       " proposal_id=?", (st, ap["approval_id"], dumps(ap), now, ap["proposal_id"])).rowcount
                     if not n:
-                        # no local row at all (state rebuilt after corruption): we no longer hold the context that
-                        # justified it, so never apply it — record it WITHDRAWN so it still counts toward fatigue
+                        # no local row at all (state rebuilt after corruption). A terminal remote status is a fact and
+                        # is recorded as such (APPLIED with the version the simulator's config history attributes to
+                        # this approval; REJECTED / EXPIRED / LAPSED). A still-open one (pending / approved) is
+                        # WITHDRAWN: we no longer hold the context that justified it, so it is never applied. Either
+                        # way it counts toward the approver's fatigue budget.
+                        if st in ("PENDING", "APPROVED"):
+                            st, ver, why = "WITHDRAWN", None, "orphan adopted after state loss; open, never applied"
+                        elif st == "APPLIED":
+                            ver = next((h["version"] for h in self.sim.config_history(spec["workflow_id"])
+                                        if h.get("approval_id") == ap["approval_id"]), None)
+                            why = (f"orphan adopted after state loss; applied remotely as v{ver} (config history)"
+                                   if ver is not None else "orphan adopted after state loss; simulator reports applied,"
+                                   " version not found in config history")
+                        else:
+                            ver, why = None, f"orphan adopted after state loss; {ap['status']} remotely"
                         with self.db.tx():
                             self.db.x("INSERT OR IGNORE INTO proposals (proposal_id, wf, route, state, kind, base_version,"
-                                      " body, approval_id, approval, created_minute, updated_minute, notes) VALUES"
-                                      " (?,?,?,?,?,?,?,?,?,?,?,?)",
-                                      (ap["proposal_id"], wf, "approval", "WITHDRAWN", "adopted", ap["base_version"],
-                                       "{}", ap["approval_id"], dumps(ap), ts_to_minute(ap["created_at"]) if ap.get("created_at") else now, now,
-                                       "orphan adopted after state loss"))
-                    notes.append(f"orphan approval {ap['approval_id']} for {ap['proposal_id']}: "
-                                 + (f"adopted as {st}" if n else "adopted as WITHDRAWN (no local context)"))
+                                      " body, approval_id, approval, applied_version, created_minute, updated_minute,"
+                                      " notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                      (ap["proposal_id"], wf, "approval", st, "adopted", ap["base_version"],
+                                       "{}", ap["approval_id"], dumps(ap), ver,
+                                       ts_to_minute(ap["created_at"]) if ap.get("created_at") else now, now, why))
+                            self.db.decide(now, wf, "recovery_reconcile", f"orphan approval {ap['approval_id']}"
+                                           f" ({ap['proposal_id']}) adopted as {st}", proposal_id=ap["proposal_id"],
+                                           approval_id=ap["approval_id"], config_version=ver, evidence=ap, reasoning=why)
+                    notes.append(f"orphan approval {ap['approval_id']} for {ap['proposal_id']}: adopted as {st}"
+                                 + ("" if n else " (no local context)"))
         return notes
 
     def reconcile_submitting(self, wf: int, wid: str, now: int):

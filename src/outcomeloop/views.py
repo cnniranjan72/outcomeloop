@@ -60,7 +60,19 @@ def why(db: DB, workflow_id: str, at: str) -> str:
         else:
             out.append("Applied via policy-permitted auto-apply (no human approval required by this workflow's policy).")
         out.append(f"Rationale: {body.get('rationale')}")
-        out.append("Diff: " + _fmt_ev(json.dumps(body.get("diff"), default=str), 600))
+        if body.get("diff") is not None:
+            out.append("Diff: " + _fmt_ev(json.dumps(body.get("diff"), default=str), 600))
+        else:   # auto route: the body carries the full proposed config and its evidence, not a diff
+            cid = (body.get("evidence") or {}).get("caller_id") or {}
+            if cid:
+                out.append("Caller-ID health: " + ", ".join(
+                    f"{d} {v.get('state')}" + (f" since {minute_to_label(v['since'])}" if v.get("state") != "healthy"
+                                               and v.get("since") is not None else "") for d, v in sorted(cid.items())))
+            dflt = ((body.get("proposed_config") or {}).get("allocations") or {}).get("default") or {}
+            if dflt:
+                out.append("Proposed default allocation: " + "; ".join(
+                    f"{dim} " + ", ".join(f"{o} {w:.0%}" for o, w in sorted(alloc.items()))
+                    for dim, alloc in dflt.items() if isinstance(alloc, dict)))
     out += ["", "## Decisions that led to it"]
     for m, kind, summ, reason in db.q(
             "SELECT minute, kind, summary, reasoning FROM decisions WHERE wf=? AND minute<=? AND minute>=? AND kind IN"
@@ -142,9 +154,9 @@ def status(db: DB) -> str:
     ev = db.q1("SELECT SUM(events), SUM(ingest_seconds) FROM chunks")
     days = db.q("SELECT labels, value FROM metrics WHERE name='wall_seconds_per_sim_day' ORDER BY id")
     out = [f"# OutcomeLoop status at {minute_to_label(now)}", "",
-           f"events ingested: {ev[0]} in {ev[1] or 0:.1f}s ({(ev[0] or 0) / max(ev[1] or 1e-9, 1e-9):,.0f} events/s while ingesting)",
-           f"ingest lag: {m('ingest_lag_minutes')} sim-minutes · credits remaining: {m('credits_remaining')} · "
-           f"open proposals: {m('open_proposals')} · peak RSS: {m('rss_mb')} MB",
+           f"events ingested: {ev[0] or 0:,} in {ev[1] or 0:.1f}s ({(ev[0] or 0) / max(ev[1] or 1e-9, 1e-9):,.0f} events/s while ingesting)",
+           f"ingest lag: {_n(m('ingest_lag_minutes'))} sim-minutes · credits remaining: {_n(m('credits_remaining'))} · "
+           f"open proposals: {_n(m('open_proposals'))} · peak RSS: {_n(m('rss_mb'))} MB",
            "wall seconds per sim day: " + ", ".join(f"{json.loads(l)['day']}:{v:.0f}s" for l, v in days)]
     alerts = db.q("SELECT minute, wf, kind, summary FROM decisions WHERE kind IN ('alert','error','incident_opened',"
                   "'decay_detected','proposal_lapsed','proposal_failed') ORDER BY decision_id DESC LIMIT 15")
@@ -156,6 +168,11 @@ def status(db: DB) -> str:
     return "\n".join(out)
 
 
+def _n(v):
+    """Metric for display: whole numbers without a trailing .0, others to one decimal; missing as '-'."""
+    return "-" if v is None else (f"{v:,.0f}" if abs(v - round(v)) < 0.05 else f"{v:,.1f}")
+
+
 def audit(db: DB, workflow_id: str | None, kind: str | None, limit: int) -> str:
     sql = "SELECT d.minute, w.workflow_id, d.kind, d.actor, d.summary, d.proposal_id FROM decisions d LEFT JOIN" \
           " workflows w ON w.wf=d.wf WHERE 1=1"
@@ -163,9 +180,9 @@ def audit(db: DB, workflow_id: str | None, kind: str | None, limit: int) -> str:
     if workflow_id:
         sql += " AND w.workflow_id=?"
         args.append(workflow_id)
-    if kind:
-        sql += " AND d.kind=?"
-        args.append(kind)
+    if kind:   # exact kind, or a prefix with a trailing * (e.g. experiment_*)
+        sql += " AND d.kind LIKE ? ESCAPE '!'" if kind.endswith("*") else " AND d.kind=?"
+        args.append(kind[:-1].replace("!", "!!").replace("_", "!_").replace("%", "!%") + "%" if kind.endswith("*") else kind)
     sql += " ORDER BY d.decision_id DESC LIMIT ?"
     args.append(limit)
     rows = db.q(sql, args)

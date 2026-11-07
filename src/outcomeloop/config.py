@@ -33,6 +33,7 @@ class Settings:
     decay_z: float = 2.33              # lift now vs lift at promotion, one-sided 1%
     decay_window_minutes: int = 1440
     decay_min_connected: int = 120
+    decay_report_minute: int = 600     # a passing decay check is audited once a day, at 10:00 (with the looks)
     rollback_blacklist_days: float = 7.0    # a decayed option is not re-tested for a week
     harm_blacklist_days: float = 14.0       # an option dropped as significantly worse: two weeks
     no_winner_cooldown_days: float = 3.0    # a dimension with no winner is not re-tested immediately

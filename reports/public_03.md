@@ -1,6 +1,6 @@
 # public_03_load — load test (measured)
 
-Machine: Windows-11-10.0.26300-SP0, 12 logical CPUs, Python 3.12.10. Measured on a 12-logical-CPU Windows 11 laptop; the simulator ran on the same machine; unrelated containers (Kafka, Postgres, Redis, MinIO, Jaeger) were running on the host. Code: commit 51965ce.
+Machine: Windows-11-10.0.26300-SP0, 12 logical CPUs, Python 3.12.10. Final code. The host was about 2x slower during this run than during earlier load tests: the simulator's own advance time (not our code) was 38-48 s per simulated day here vs 16-26 s before, and controller time rose by about the same factor. Controller/simulator time per day: 1.7-2.8 here, 2.1-3.4 on 51965ce. Compare runs by that ratio, or use the container-capped curve in reports/scaling.md.
 
 All numbers below are read from the controller's own `metrics`/`chunks` tables and the DB file after the run; nothing is estimated unless marked *(derived)*.
 
@@ -9,27 +9,27 @@ All numbers below are read from the controller's own `metrics`/`chunks` tables a
 | measure | value |
 |---|---|
 | workflows | 12 |
-| history events ingested (pre-D0) | 5,537,379 in 127.1s → 43,550 events/s |
-| live events ingested (D0–end) | 4,200,187 in 102.9s → 40,806 events/s |
-| peak per-chunk ingest rate | 60,334 events/s |
+| history events ingested (pre-D0) | 5,537,379 in 230.3s → 24,039 events/s |
+| live events ingested (D0–end) | 4,200,180 in 202.0s → 20,791 events/s |
+| peak per-chunk ingest rate | 30,621 events/s |
 | call rows stored | 7,433,295 |
-| controller time per 15-min tick (ingest + decide), p50 / p95 / max | 0.43s / 1.14s / 17.84s |
+| controller time per 15-min tick (ingest + decide), p50 / p95 / max | 0.85s / 1.84s / 40.29s |
 | backlog after each tick | 0 chunks: every tick ingests all pending chunks before deciding (the `ingest_lag_minutes` metric, max 660, is time since the last chunk boundary and grows at night when no calls are made, not unprocessed data) |
-| peak controller memory (peak working set / max RSS) | 1046 MB |
+| peak controller memory (peak working set / max RSS) | 361 MB |
 | SQLite size at end (db + wal) | 433 MB |
-| decisions recorded | 737 |
-| proposals by state | {'APPLIED': 84, 'PENDING': 1, 'REJECTED': 6} |
-| controller wall-clock, whole run incl. waiting on the simulator | 470s |
+| decisions recorded | 753 |
+| proposals by state | {'APPLIED': 83, 'REJECTED': 1} |
+| controller wall-clock, whole run incl. waiting on the simulator | 903s |
 
 ## Per simulated day
 
 | day | events | ingest s | decide s | controller s (ingest+decide) | simulator advance s | wall s |
 |---|---|---|---|---|---|---|
-| D0 | 840,056 | 26.3 | 26.9 | 53.3 | 15.8 | 70.4 |
-| D1 | 840,045 | 27.6 | 14.8 | 42.4 | 19.8 | 63.6 |
-| D2 | 840,036 | 26.8 | 17.2 | 44.0 | 20.3 | 65.3 |
-| D3 | 840,024 | 27.8 | 17.6 | 45.4 | 19.7 | 65.8 |
-| D4 | 840,026 | 26.5 | 18.9 | 45.3 | 20.5 | 66.6 |
+| D0 | 840,055 | 50.1 | 54.8 | 104.9 | 38.2 | 144.6 |
+| D1 | 840,043 | 50.7 | 23.8 | 74.4 | 44.0 | 120.3 |
+| D2 | 840,032 | 52.8 | 29.3 | 82.1 | 45.7 | 129.1 |
+| D3 | 840,024 | 52.7 | 31.8 | 84.5 | 46.6 | 131.9 |
+| D4 | 840,026 | 51.6 | 33.9 | 85.5 | 47.6 | 133.9 |
 
 SRE target: ingest and decide on one simulated day in < 10 wall-clock minutes (600 s). The *controller s* column is our share; *simulator advance s* is the simulator generating the world, which in production is the real dialler and does not run on our box.
 
@@ -37,16 +37,16 @@ SRE target: ingest and decide on one simulated day in < 10 wall-clock minutes (6
 
 | workflow | conclusion rate | Δ | pickup | Δ | engagement | Δ | engagement gap captured | hallucinated calls (base) |
 |---|---|---|---|---|---|---|---|---|
-| arav_cancel_2 | 0.397 | +16.3% | 0.267 | +9.3% | 0.527 | +5.2% | 40% | 412 (408) |
-| arav_kyc_1 | 0.501 | +41.4% | 0.275 | +28.0% | 0.624 | +4.7% | 27% | 450 (370) |
-| arav_renewal_0 | 0.477 | +18.6% | 0.288 | +9.0% | 0.587 | +8.1% | 39% | 481 (440) |
-| kest_cancel_2 | 0.392 | +15.7% | 0.266 | +9.2% | 0.524 | +5.2% | 37% | 430 (411) |
-| kest_kyc_1 | 0.508 | +43.7% | 0.276 | +28.8% | 0.629 | +5.8% | 33% | 430 (339) |
-| kest_renewal_0 | 0.485 | +21.4% | 0.288 | +9.2% | 0.595 | +9.7% | 50% | 465 (433) |
-| nort_cancel_2 | 0.396 | +16.9% | 0.266 | +9.6% | 0.528 | +5.8% | 37% | 451 (393) |
-| nort_kyc_1 | 0.498 | +40.7% | 0.276 | +29.4% | 0.619 | +3.9% | 23% | 472 (323) |
-| nort_renewal_0 | 0.487 | +20.4% | 0.287 | +8.8% | 0.599 | +9.3% | 50% | 473 (411) |
-| tide_cancel_2 | 0.395 | +16.4% | 0.266 | +8.8% | 0.527 | +5.6% | 40% | 445 (407) |
-| tide_kyc_1 | 0.388 | +9.7% | 0.224 | +4.6% | 0.612 | +3.4% | 14% | 348 (356) |
-| tide_renewal_0 | 0.484 | +20.8% | 0.285 | +7.8% | 0.594 | +9.5% | 42% | 491 (438) |
-| ALL | 0.451 | +23.5% | 0.272 | +13.0% | 0.580 | +6.8% | 36% | 5348 (4729) |
+| arav_cancel_2 | 0.385 | +12.7% | 0.266 | +9.0% | 0.513 | +2.6% | 24% | 465 (408) |
+| arav_kyc_1 | 0.508 | +43.6% | 0.276 | +28.5% | 0.628 | +5.5% | 33% | 425 (370) |
+| arav_renewal_0 | 0.485 | +20.5% | 0.287 | +8.8% | 0.597 | +9.8% | 50% | 466 (440) |
+| kest_cancel_2 | 0.390 | +15.1% | 0.267 | +9.7% | 0.518 | +3.9% | 26% | 425 (411) |
+| kest_kyc_1 | 0.509 | +44.1% | 0.276 | +28.8% | 0.629 | +5.8% | 33% | 422 (339) |
+| kest_renewal_0 | 0.492 | +23.1% | 0.289 | +9.7% | 0.597 | +10.1% | 49% | 464 (433) |
+| nort_cancel_2 | 0.403 | +19.0% | 0.266 | +9.7% | 0.536 | +7.4% | 49% | 447 (393) |
+| nort_kyc_1 | 0.504 | +42.4% | 0.274 | +28.3% | 0.628 | +5.5% | 33% | 443 (323) |
+| nort_renewal_0 | 0.484 | +19.6% | 0.286 | +8.7% | 0.597 | +8.9% | 49% | 437 (411) |
+| tide_cancel_2 | 0.404 | +19.1% | 0.265 | +8.6% | 0.538 | +7.7% | 52% | 441 (407) |
+| tide_kyc_1 | 0.411 | +16.4% | 0.235 | +9.7% | 0.613 | +3.6% | 17% | 387 (356) |
+| tide_renewal_0 | 0.477 | +19.0% | 0.283 | +7.2% | 0.590 | +8.8% | 37% | 453 (438) |
+| ALL | 0.454 | +24.5% | 0.273 | +13.3% | 0.582 | +7.1% | 38% | 5275 (4729) |

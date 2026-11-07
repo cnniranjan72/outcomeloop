@@ -73,7 +73,7 @@ class FakeSim:
     def list_chunks(self, kind: str, after: int = -1) -> list[dict]:
         return [dict(c["meta"]) for n, c in sorted(self.chunks.items()) if c["meta"]["kind"] == kind and n > after]
 
-    def iter_chunk(self, n: int):
+    def iter_chunk(self, n: int, expect: int | None = None):
         self.calls["iter_chunk"] += 1
         c = self.chunks[n]
         for i, ev in enumerate(c["events"]):
