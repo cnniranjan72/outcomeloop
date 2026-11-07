@@ -1,0 +1,5 @@
+{
+  "_comment": "Voluntary, stricter-than-policy preferences agreed with client stakeholders (see SUBMISSION.md §3). Unknown tenants fall back to the published policy.",
+  "kestrel_finance": {"not_before_hour": 11, "max_requests_per_24h": 2},
+  "northwind_life": {}
+}

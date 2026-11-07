@@ -1,0 +1,996 @@
+"""The control loop: ingest → handle events → governance → decide → advance.
+
+Planning model: every decision tick we compute the *desired* config for a workflow from our own state
+(cohort set, schedule, caller-ID health, experiment plans, incident fixes) layered on top of the *current live*
+config. The proposal is simply current → desired. Re-basing after a supervisor edit or a stale/expired
+proposal is therefore automatic: the next plan starts from the new live config, and dimensions a supervisor
+touched recently are locked so we never overwrite them silently.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import logging
+import math
+import os
+import time
+from pathlib import Path
+
+from .cohorts import Cohort, bootstrap_cohorts, load_cohorts, membership_sql, save_cohorts, schedule_weights
+from .config import Settings
+from .db import DB, dumps
+from .detectors import did_health, halluc_baseline, halluc_spike, kpi_drift
+from .experiments import EXP_DIMS, Experiment, ExperimentEngine
+from .governance import Governance
+from .ingest import Ingestor
+from .simclient import ApiError, SimClient, Uncertain
+from .stats import tv_distance
+from .timeutil import minute_to_label
+
+log = logging.getLogger("outcomeloop")
+
+AGENT_DIMS = ("welcome_message", "voice", "caller_id")
+CHANGE_DIMS = ("cohorts", "welcome_message", "voice", "caller_id", "prompt_version", "schedule")
+
+
+# ------------------------------------------------------------------------------------------ config algebra
+def _dist(cfg: dict, cohort: str, dim: str) -> dict:
+    return (cfg["allocations"].get(cohort) or {}).get(dim) or cfg["allocations"]["default"][dim]
+
+
+def _norm(d: dict) -> dict:
+    z = sum(d.values()) or 1.0
+    return {k: v / z for k, v in d.items() if v > 0}
+
+
+def changed_dims(old: dict, new: dict) -> list[str]:
+    """Same semantics as the governance boundary uses (docs/SIMULATOR.md §4.2)."""
+    ch = set()
+    if old.get("cohorts", []) != new.get("cohorts", []):
+        ch.add("cohorts")
+    keys = set(old["allocations"]) | set(new["allocations"])
+    for dim in AGENT_DIMS:
+        if any(tv_distance(_dist(old, k, dim), _dist(new, k, dim)) > 1e-9 for k in keys):
+            ch.add(dim)
+    if old.get("prompt_version") != new.get("prompt_version"):
+        ch.add("prompt_version")
+    if old.get("schedule") != new.get("schedule"):
+        ch.add("schedule")
+    return [d for d in CHANGE_DIMS if d in ch]
+
+
+def max_shift(old: dict, new: dict) -> float:
+    keys = {"default"} | {c["id"] for c in old.get("cohorts", [])} | {c["id"] for c in new.get("cohorts", [])}
+    return max((tv_distance(_dist(old, k, d), _dist(new, k, d)) for k in keys for d in AGENT_DIMS), default=0.0)
+
+
+class Controller:
+    def __init__(self, s: Settings):
+        self.s = s
+        self.sim = SimClient(s.sim_url, s.http_timeout_s, s.http_retries)
+        self._prepare_db()
+        self.db = DB(s.db_path)
+        self.ing = Ingestor(self.db, self.sim)
+        self.gov = Governance(self.db, self.sim, s)
+        self.exp = ExperimentEngine(self.db, s)
+        self.specs: dict[int, dict] = {}
+        self.wf_by_id: dict[str, int] = {}
+        self.now = 0
+        self.decisions_this_hour = 0
+        self.t_start = time.time()
+        self.day_wall: dict[int, float] = {}
+
+    # ------------------------------------------------------------------ world identity
+    def _prepare_db(self):
+        """If the simulator is a different world from the one our DB remembers, archive the DB and start fresh.
+        If the controller restarts against the same world, keep everything (that's crash recovery)."""
+        st = self._wait_for_sim()
+        p = Path(self.s.db_path)
+        if not p.exists():
+            return
+        db = DB(p)
+        known = db.meta_get("scenario")
+        last = db.q1("SELECT MAX(until_minute) FROM chunks")[0]
+        first = db.meta_get("first_history_event")
+        db.close()
+        same = known == st["scenario"] and (last is None or last <= st["sim_minute"])
+        if same and first:
+            try:
+                ch = self.sim.list_chunks("history", -1)
+                same = bool(ch) and str(ch[0].get("last_event_id")) == first
+            except Exception:
+                pass
+        if not same:
+            arch = p.with_suffix(f".{int(time.time())}.old")
+            log.warning("simulator world changed (%s -> %s); archiving %s to %s", known, st["scenario"], p, arch)
+            for suf in ("", "-wal", "-shm"):
+                q = Path(str(p) + suf)
+                if q.exists():
+                    q.rename(Path(str(arch) + suf))
+
+    def _wait_for_sim(self) -> dict:
+        for i in range(600):
+            try:
+                return self.sim.state()
+            except Exception:
+                if i % 10 == 0:
+                    log.info("waiting for simulator at %s …", self.s.sim_url)
+                time.sleep(1)
+        raise SystemExit(f"simulator at {self.s.sim_url} not reachable")
+
+    # ------------------------------------------------------------------ startup
+    def startup(self):
+        st = self.sim.state()
+        db = self.db
+        with db.tx():
+            db.meta_set("scenario", st["scenario"])
+        hist = self.sim.list_chunks("history", -1)
+        if hist:
+            with db.tx():
+                db.meta_set("first_history_event", str(hist[0]["last_event_id"]))
+        for w in self.sim.workflows():
+            wf = db.code("wf", w["workflow_id"])
+            with db.tx():
+                db.x("INSERT INTO workflows VALUES (?,?,?,?) ON CONFLICT(wf) DO UPDATE SET spec=excluded.spec",
+                     (wf, w["workflow_id"], w["tenant_id"], dumps(w)))
+            self.specs[wf] = w
+            self.wf_by_id[w["workflow_id"]] = wf
+        restarted = db.q1("SELECT COUNT(*) FROM chunks")[0] > 0
+        t0 = time.time()
+        n = self.ing.ingest_all()
+        self.now = st["sim_minute"]
+        with db.tx():
+            db.decide(self.now, None, "controller_start" if not restarted else "controller_restart",
+                      f"{'restarted' if restarted else 'started'} at {minute_to_label(self.now)}; ingested {n} events"
+                      f" in {time.time() - t0:.1f}s", evidence={"scenario": st["scenario"],
+                                                              "credits": st["credits_remaining"]})
+        notes = self.gov.reconcile_all(self.specs, self.now, self._on_gov)
+        if restarted:
+            log.info("recovery: %s", notes or "nothing in flight")
+        self.handle_inbox()
+        for wf in self.specs:
+            self._sync_config(wf)
+
+    # ------------------------------------------------------------------ main loop
+    def run(self):
+        self.startup()
+        while True:
+            day = self.now // 1440
+            self.day_wall.setdefault(day, time.time())
+            self.governance_tick()
+            if self.now % self.s.decision_every_minutes == 0:
+                for wf in sorted(self.specs):
+                    try:
+                        self.decide(wf)
+                    except (ApiError, Uncertain) as e:
+                        log.error("decide %s failed: %s", self.specs[wf]["workflow_id"], e)
+                        with self.db.tx():
+                            self.db.decide(self.now, wf, "error", f"decision step failed: {e}")
+            st = self._advance()
+            if st is None:
+                break
+            t0 = time.time()
+            n = self.ing.ingest_all()
+            self.handle_inbox()
+            self._metrics(n, time.time() - t0, st)
+            if st["finished"]:
+                break
+        self.finish()
+
+    def _advance(self) -> dict | None:
+        try:
+            st = self.sim.advance(self.s.tick_minutes)
+        except ApiError as e:
+            if e.code == "finished":
+                return None
+            raise
+        except Uncertain:
+            st = self.sim.state()   # time may or may not have moved: read it, never assume
+        self.now = st["sim_minute"]
+        return st
+
+    def finish(self):
+        st = self.sim.state()
+        with self.db.tx():
+            self.db.decide(self.now, None, "controller_finish", f"scenario finished at {minute_to_label(self.now)}",
+                           evidence={"credits_remaining": st["credits_remaining"],
+                                     "wall_seconds": round(time.time() - self.t_start, 1),
+                                     "events_ingested": self.ing.events_total})
+        log.info("finished: %s", st)
+
+    # ------------------------------------------------------------------ events
+    def handle_inbox(self):
+        for event_id, typ, wf, minute, payload in self.ing.inbox():
+            ev = json.loads(payload)
+            with self.db.tx():
+                if typ == "config_changed":
+                    self._on_config_changed(wf, ev, minute)
+                elif typ == "approval_decided":
+                    self.db.decide(minute, wf, "approval_decided",
+                                   f"{ev['approval_id']} {ev['status']}", evidence=ev, actor="approver",
+                                   approval_id=ev["approval_id"], outcome=ev["status"])
+                self.ing.mark_done(event_id)
+
+    def _on_config_changed(self, wf: int, ev: dict, minute: int):
+        actor, ver, dims = ev["actor"], ev["version"], ev.get("changed_dims") or []
+        cur = self.sim.config(self.specs[wf]["workflow_id"])
+        if cur["version"] == ver:
+            self.db.x("UPDATE config_versions SET config=? WHERE wf=? AND version=?", (dumps(cur["config"]), wf, ver))
+        if minute >= 0:
+            self.db.decide(minute, wf, "config_changed", f"v{ver} by {actor}: {', '.join(dims) or 'no dims'}",
+                           actor=actor, evidence=ev, proposal_id=ev.get("proposal_id"),
+                           approval_id=ev.get("approval_id"), config_version=ver)
+        if actor == "supervisor" and minute >= 0:
+            locks = self.db.kv_get(f"locks:{wf}", {})
+            for d in dims:
+                locks[d] = minute + int(self.s.supervisor_lock_hours * 60)
+            self.db.kv_set(f"locks:{wf}", locks)
+            self.db.decide(minute, wf, "supervisor_edit", f"supervisor changed {dims}; locked for "
+                           f"{self.s.supervisor_lock_hours:.0f}h — we will not propose changes to these dims",
+                           reasoning="supervisor edits are authoritative and bypass governance; we never overwrite"
+                                     " them silently. Pending proposals on an older base will be re-planned.",
+                           config_version=ver, actor="controller")
+            if "prompt_version" in dims:
+                inc = self.db.kv_get(f"prompt_probe:{wf}", [])
+                inc.append({"version": ver, "minute": minute, "prompt": cur["config"]["prompt_version"]})
+                self.db.kv_set(f"prompt_probe:{wf}", inc)
+        # experiments react to every version
+        for e in Experiment.load_active(self.db, wf).values():
+            tr = self.exp.on_config(e, cur["config"], ver, actor, dims, minute)
+            if tr:
+                e.save(self.db, minute)
+                self.db.decide(minute, wf, f"experiment_{tr}", f"{e.dim} experiment {tr} (v{ver})",
+                               evidence={"plan": e.plan, "versions": e.versions, "result": e.result},
+                               experiment_id=e.experiment_id, config_version=ver)
+        # cohort set becomes live when the config carries it
+        mine = load_cohorts(self.db, wf, ("proposed",))
+        if mine and [c.to_config() for c in mine] == cur["config"].get("cohorts"):
+            self.db.x("UPDATE cohorts SET status='live' WHERE wf=? AND status='proposed'", (wf,))
+        # incidents waiting on a prompt fix
+        for iid, data in self.db.q("SELECT incident_id, data FROM incidents WHERE wf=? AND state='proposed'", (wf,)):
+            d = json.loads(data)
+            if cur["config"]["prompt_version"] == d.get("fix_prompt"):
+                d["applied_minute"] = minute
+                self.db.x("UPDATE incidents SET state='verifying', data=? WHERE incident_id=?", (dumps(d), iid))
+                self.db.decide(minute, wf, "incident_fix_applied", f"{iid}: prompt {d['fix_prompt']} live (v{ver})",
+                               incident_id=iid, config_version=ver)
+
+    def _on_gov(self, kind: str, wf: int, pid: str, info: dict):
+        msg = {"approved": "approved by client approver", "rejected": "rejected", "expired": "expired unanswered",
+               "lapsed": "approval lapsed before apply", "stale": "base version changed — will re-plan on new base",
+               "applied": "applied"}.get(kind, kind)
+        self.db.decide(self.now, wf, f"proposal_{kind}", f"{pid}: {msg}", evidence=info, proposal_id=pid,
+                       approval_id=info.get("approval_id"), config_version=info.get("version"),
+                       reasoning={"expired": "an expired proposal is treated as a rejection: re-plan from fresh data,"
+                                             " never resubmit the stale body",
+                                  "stale": "never force a stale proposal over a newer (possibly supervisor) config",
+                                  "rejected": f"reasons: {info.get('reasons')}"}.get(kind, ""))
+
+    def governance_tick(self):
+        self.gov.tick(self.now, self.specs, self._on_gov)
+
+    def _sync_config(self, wf: int) -> dict:
+        cur = self.sim.config(self.specs[wf]["workflow_id"])
+        with self.db.tx():
+            self.db.x("INSERT INTO config_versions (wf, version, actor, config) VALUES (?,?,?,?) ON CONFLICT(wf, version)"
+                      " DO UPDATE SET config=excluded.config", (wf, cur["version"], cur["actor"], dumps(cur["config"])))
+        return cur
+
+    # ------------------------------------------------------------------ decisions
+    def decide(self, wf: int):
+        spec = self.specs[wf]
+        now = self.now
+        db = self.db
+        if not db.kv_get(f"boot:{wf}"):
+            self.bootstrap(wf)
+        cur = self.sim.config(spec["workflow_id"])
+        cfg = cur["config"]
+        locks = {d: t for d, t in db.kv_get(f"locks:{wf}", {}).items() if t > now}
+        ctx = {"locks": locks, "notes": [], "evidence": {}, "emergency": False, "kinds": []}
+
+        dids = self.detect_did(wf, spec, now, ctx)
+        self.detect_halluc(wf, spec, cfg, now, ctx)
+        if now % 1440 == 12 * 60:
+            drift = kpi_drift(db, wf, now, self.s)
+            if drift["alerts"]:
+                with db.tx():
+                    db.decide(now, wf, "alert", f"KPI drift: {drift['alerts']}", evidence=drift)
+        self.step_experiments(wf, spec, cfg, now, ctx)
+
+        desired = self.desired_config(wf, spec, cfg, dids, ctx)
+        self.route(wf, spec, cur, desired, ctx)
+
+    # ---- bootstrap from history (C3)
+    def bootstrap(self, wf: int):
+        spec = self.specs[wf]
+        db = self.db
+        lo = db.q1("SELECT MIN(minute) FROM calls WHERE wf=?", (wf,))[0] or 0
+        until = min(self.now, 0) if lo < 0 else self.now
+        cohorts, ev = bootstrap_cohorts(db, wf, self.s, lo, max(until, lo + 1))
+        weights, dry = schedule_weights(db, wf, cohorts, spec["dialling_window"], self.s, lo, max(until, lo + 1)) \
+            if cohorts else ({}, {})
+        base = halluc_baseline(db, wf, max(until, lo + 1))
+        tot_c = sum(v["connected"] for v in base.values())
+        ref = (sum(v["flags"] for v in base.values()) / tot_c) if tot_c else 0.015
+        with db.tx():
+            save_cohorts(db, wf, cohorts, self.now, rationale=json.dumps(ev, default=str))
+            db.kv_set(f"schedule:{wf}", {"hour_weights": weights, "dry_run": dry})
+            db.kv_set(f"halluc_ref:{wf}", {"rate": ref, "by_prompt": base})
+            db.kv_set(f"boot:{wf}", {"minute": self.now, "history": [lo, until]})
+            db.decide(self.now, wf, "bootstrap", f"bootstrapped from history {minute_to_label(lo)}..{minute_to_label(until)}:"
+                      f" cohorts by {ev.get('chosen')} {[c.cohort_id for c in cohorts]}, schedule dry-run pickup lift"
+                      f" {dry.get('rel_lift', 0):+.1%}, QA flag reference rate {ref:.4f}",
+                      reasoning="cohort feature = the one whose values have the most different hour-of-day pickup"
+                                " profiles (likelihood-ratio test p<0.001, largest G²/df); groups below 10% of dials are"
+                                " merged so no cohort is too small to measure",
+                      evidence={"cohorts": ev, "schedule_dry_run": dry, "halluc_baseline": base})
+
+    # ---- caller ID (C5)
+    def detect_did(self, wf, spec, now, ctx) -> dict:
+        opts = spec["options"]["caller_id"]
+        health = did_health(self.db, wf, opts, now, self.s)
+        mem = self.db.kv_get(f"did:{wf}", {})
+        changed = []
+        for d, h in health.items():
+            prev = mem.get(d, {}).get("state", "unknown")
+            if h["state"] == "degraded" and prev != "degraded":
+                mem[d] = {"state": "degraded", "since": now}
+                changed.append((d, prev, "degraded", h))
+            elif h["state"] == "healthy" and prev not in ("healthy", "degraded"):
+                mem[d] = {"state": "healthy", "since": now}
+                changed.append((d, prev, "healthy", h))
+        with self.db.tx():
+            self.db.kv_set(f"did:{wf}", mem)
+            for d, a, b, h in changed:
+                self.db.decide(now, wf, "did_health", f"caller ID {d}: {a} -> {b}", evidence=h,
+                               reasoning="caller ID is randomised per dial, so its pickup vs the other numbers in the"
+                                         " same window isolates the number's reputation; degraded = ratio<0.85 and"
+                                         " z<-3.5 on >=300 dials")
+        if any(b == "degraded" for _, _, b, _ in changed):
+            ctx["emergency"] = True
+            ctx["kinds"].append("did_incident")
+        ctx["evidence"]["caller_id"] = {d: {"state": mem.get(d, {}).get("state", "unknown"),
+                                            "slow": health[d]["windows"].get("slow")} for d in opts}
+        return mem
+
+    def did_target(self, opts: list[str], mem: dict, cur: dict) -> dict:
+        healthy = [d for d in opts if mem.get(d, {}).get("state") == "healthy"]
+        degraded = {d for d in opts if mem.get(d, {}).get("state") == "degraded"}
+        unknown = [d for d in opts if d not in degraded and d not in healthy]
+        if not healthy:
+            healthy = [d for d in cur if d not in degraded] or [d for d in opts if d not in degraded]
+            unknown = [d for d in unknown if d not in healthy]
+        if not healthy:
+            return cur
+        probe = self.s.did_probe_share
+        tgt = {d: probe for d in unknown}
+        rest = 1 - probe * len(unknown)
+        for d in healthy:
+            tgt[d] = rest / len(healthy)
+        return {d: round(w, 4) for d, w in tgt.items() if w > 0}
+
+    # ---- hallucination (C8)
+    def detect_halluc(self, wf, spec, cfg, now, ctx):
+        db = self.db
+        ref = db.kv_get(f"halluc_ref:{wf}", {"rate": 0.015})["rate"]
+        prompt = cfg["prompt_version"]
+        open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state NOT IN ('closed')"
+                         " ORDER BY opened_minute DESC", (wf,))
+        # probe a supervisor's new prompt with a validation run (3 credits): earliest population evidence
+        probes = db.kv_get(f"prompt_probe:{wf}", [])
+        if probes:
+            p = probes[-1]
+            with db.tx():
+                db.kv_set(f"prompt_probe:{wf}", [])
+            if p["prompt"] == prompt:
+                run = self._validate(wf, spec, prompt, purpose=f"probe supervisor prompt change v{p['version']}")
+                thr = spec["governance"].get("min_validation_pass_rate", 0.97)
+                if run and run["pass_rate"] < thr and not open_inc:
+                    self._open_incident(wf, prompt, now, {"trigger": "validation_probe", "validation": run,
+                                                          "threshold": thr})
+                    open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state!='closed'"
+                                     " ORDER BY opened_minute DESC", (wf,))
+        since = db.q1("SELECT MAX(minute) FROM config_versions WHERE wf=? AND changed_dims LIKE '%prompt_version%'",
+                      (wf,))[0] or (now - 1440)
+        sp = halluc_spike(db, wf, prompt, max(since, now - 1440), now, ref, self.s)
+        ctx["evidence"]["halluc"] = sp
+        if sp["fired"] and not open_inc:
+            self._open_incident(wf, prompt, now, {"trigger": "flag_rate", "detector": sp})
+            open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state!='closed'"
+                             " ORDER BY opened_minute DESC", (wf,))
+        if not open_inc:
+            return
+        iid, state, data = open_inc
+        d = json.loads(data)
+        if state == "open":
+            self._find_fix(wf, spec, iid, d, prompt, now)
+        elif state == "verifying" and now - d.get("applied_minute", now) >= 240:
+            v = halluc_spike(db, wf, prompt, d["applied_minute"], now, ref, self.s)
+            ok = not v["fired"] and v["connected"] >= 100
+            if ok or now - d["applied_minute"] > 1440:
+                with db.tx():
+                    d["verification"] = v
+                    db.x("UPDATE incidents SET state=?, closed_minute=?, data=? WHERE incident_id=?",
+                         ("closed", now, dumps(d), iid))
+                    db.decide(now, wf, "incident_verified" if ok else "incident_closed_unverified",
+                              f"{iid}: after fix flag rate {v['flag_rate']:.4f} vs ref {v['ref_rate']:.4f}"
+                              f" on {v['connected']} connected calls", evidence=v, incident_id=iid)
+        elif state == "fix_ready":
+            if cfg["prompt_version"] == d.get("fix_prompt"):
+                with db.tx():
+                    d["applied_minute"] = now
+                    db.x("UPDATE incidents SET state='verifying', data=? WHERE incident_id=?", (dumps(d), iid))
+            else:
+                ctx["prompt_fix"] = (iid, d)
+                ctx["emergency"] = True
+                ctx["kinds"].append("halluc_incident")
+        elif state == "proposed":
+            pid = d.get("proposal_id")
+            st = db.q1("SELECT state FROM proposals WHERE proposal_id=?", (pid,))
+            if st and st[0] in ("REJECTED", "EXPIRED", "LAPSED", "STALE", "SUBMIT_FAILED"):
+                with db.tx():
+                    db.x("UPDATE incidents SET state='fix_ready' WHERE incident_id=?", (iid,))
+                    db.decide(now, wf, "incident_repropose", f"{iid}: fix proposal {pid} {st[0]} — re-proposing",
+                              incident_id=iid, proposal_id=pid)
+
+    def _open_incident(self, wf, prompt, now, evidence):
+        iid = f"inc-{self.specs[wf]['workflow_id']}-{now}"
+        with self.db.tx():
+            self.db.x("INSERT OR IGNORE INTO incidents VALUES (?,?,?,?,?,?,?)",
+                      (iid, wf, "hallucination", "open", now, None, dumps({"bad_prompt": prompt, **evidence})))
+            self.db.decide(now, wf, "incident_opened", f"hallucination incident on prompt {prompt}",
+                           evidence=evidence, incident_id=iid,
+                           reasoning="population evidence (validation run of n synthetic calls, or QA flag rate on"
+                                     " >=250 connected calls) shows the live prompt is unsafe")
+
+    def _credits_ok(self, cost: float, incident: bool) -> bool:
+        st = self.sim.state()
+        budget0 = self.db.kv_get("credits_start") or st["credits_remaining"]
+        if not self.db.kv_get("credits_start"):
+            with self.db.tx():
+                self.db.kv_set("credits_start", budget0)
+        floor = 0 if incident else budget0 * self.s.credit_incident_reserve
+        return st["credits_remaining"] - cost >= floor
+
+    def _validate(self, wf, spec, prompt, purpose) -> dict | None:
+        n = self.s.validation_n
+        cost = math.ceil(n / 100)
+        if not self._credits_ok(cost, incident=True):
+            return None
+        with self.db.tx():
+            cur = self.db.x("INSERT INTO credits_ledger (minute, wf, kind, purpose, state, cost, request) VALUES"
+                            " (?,?,?,?,?,?,?)", (self.now, wf, "validation", purpose, "sent", cost,
+                                                 dumps({"prompt_version": prompt, "n": n})))
+            lid = cur.lastrowid
+        try:
+            run = self.sim.validate(spec["workflow_id"], prompt, n)
+        except (ApiError, Uncertain) as e:
+            with self.db.tx():
+                self.db.x("UPDATE credits_ledger SET state=?, response=? WHERE id=?", ("failed", str(e), lid))
+            return None
+        with self.db.tx():
+            self.db.x("UPDATE credits_ledger SET state='done', response=? WHERE id=?", (dumps(run), lid))
+            self.db.decide(self.now, wf, "validation_run", f"validated {prompt}: pass_rate {run['pass_rate']:.3f}"
+                           f" (n={n}, {cost} credits) — {purpose}", evidence=run)
+        return run
+
+    def _find_fix(self, wf, spec, iid, d, bad_prompt, now):
+        """Known-good prompts from our own history first; the LLM only if none validates. The LLM proposes;
+        validation and our deterministic rule decide."""
+        db = self.db
+        thr = spec["governance"].get("min_validation_pass_rate", 0.97)
+        ref = db.kv_get(f"halluc_ref:{wf}", {"rate": 0.015})["rate"]
+        obs = halluc_baseline(db, wf, now)
+        known = sorted([p for p, v in obs.items() if p != bad_prompt and p in spec["options"]["prompt_version"]
+                        and v["connected"] >= self.s.known_good_min_connected and v["flag_rate"] <= 1.25 * ref],
+                       key=lambda p: (-(obs[p]["engagement"] or 0), p))
+        tried = d.setdefault("tried", {})
+        cands = [(p, "known_good") for p in known if p not in tried]
+        if not cands and not d.get("llm_called"):
+            cost = 3
+            if self._credits_ok(cost, incident=True):
+                try:
+                    with db.tx():
+                        lid = db.x("INSERT INTO credits_ledger (minute, wf, kind, purpose, state, cost) VALUES"
+                                   " (?,?,?,?,?,?)", (now, wf, "llm", f"suggest fixes for {iid}", "sent", cost)).lastrowid
+                    r = self.sim.suggest_fixes(spec["workflow_id"],
+                                               f"hallucination flag rate spike on prompt {bad_prompt}")
+                    with db.tx():
+                        db.x("UPDATE credits_ledger SET state='done', response=? WHERE id=?", (dumps(r), lid))
+                    d["llm_called"] = True
+                    d["llm_suggestions"] = r["suggestions"]
+                    cands = [(x["prompt_version"], "llm") for x in r["suggestions"] if x["prompt_version"] not in tried]
+                except (ApiError, Uncertain) as e:
+                    log.error("llm call failed: %s", e)
+        best = None
+        for p, src in cands[:3]:
+            run = self._validate(wf, spec, p, purpose=f"candidate fix for {iid} ({src})")
+            if not run:
+                break
+            tried[p] = {"source": src, "validation": run}
+            if run["pass_rate"] >= thr:
+                best = (p, src, run)
+                break   # known-good list is already ordered by observed engagement: first passing wins
+        with db.tx():
+            if best:
+                d.update({"fix_prompt": best[0], "fix_source": best[1], "validation_run_id": best[2]["validation_run_id"],
+                          "validation": best[2]})
+                db.x("UPDATE incidents SET state='fix_ready', data=? WHERE incident_id=?", (dumps(d), iid))
+                db.decide(now, wf, "incident_fix_selected", f"{iid}: fix = prompt {best[0]} ({best[1]}),"
+                          f" validation pass {best[2]['pass_rate']:.3f} >= {thr}", evidence=d, incident_id=iid,
+                          reasoning="deterministic rule: candidates with observed history first (ordered by observed"
+                                    " engagement, because validation measures safety only), then LLM suggestions;"
+                                    " first candidate passing the policy validation threshold wins")
+            else:
+                db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
+                db.decide(now, wf, "incident_no_fix", f"{iid}: no candidate passed validation yet", evidence=d,
+                          incident_id=iid)
+
+    # ---- experiments (C6/C7)
+    def step_experiments(self, wf, spec, cfg, now, ctx):
+        db = self.db
+        active = Experiment.load_active(db, wf)
+        cohorts = load_cohorts(db, wf, ("live",))
+        margin = list(spec["objective"]["guardrail"].values())[0] if spec["objective"].get("guardrail") else 0.02
+        look_hour = max(spec["governance"]["approver_hours"][0],
+                        self.s.tenant_pref(spec["tenant_id"]).get("not_before_hour", 0))
+        black = db.kv_get(f"blacklist:{wf}", {})
+        for dim in EXP_DIMS:
+            e = active.get(dim)
+            if e is None:
+                if dim in ctx["locks"] or len(spec["options"][dim]) < 2 or now < 0:
+                    continue
+                last = db.q1("SELECT MAX(updated_minute) FROM experiments WHERE wf=? AND dim=? AND status IN"
+                             " ('no_winner','rolled_back','aborted')", (wf, dim))[0]
+                if last is not None and now - last < 1440:
+                    continue
+                r = db.q1("SELECT SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<?",
+                          (wf, now - 7 * 1440, now))
+                conn, eng = r[0] or 0, r[1] or 0
+                if conn < 500:
+                    continue
+                days = min(7, (now - (db.q1("SELECT MIN(minute) FROM calls WHERE wf=?", (wf,))[0] or now)) / 1440) or 1
+                e = self.exp.design(wf, dim, cfg, spec["options"][dim], black, now, eng / conn, conn / days)
+                if e:
+                    with db.tx():
+                        e.save(db, now)
+                        db.decide(now, wf, "experiment_designed",
+                                  f"{dim}: test {e.arms} (incumbent {e.incumbent} keeps {e.design[e.incumbent]:.0%})",
+                                  evidence={"design": e.design, "p_base": e.p_base, "n_plan_per_arm": e.n_plan,
+                                            "achieved_mde_rel": e.achieved_mde},
+                                  reasoning=f"factorial with the other dimension; alpha {self.s.alpha} family-wise"
+                                            f" (Holm across challengers, O'Brien-Fleming spending across daily looks),"
+                                            f" power {self.s.power}; planned n per challenger {e.n_plan} gives an MDE of"
+                                            f" {e.achieved_mde:.1%} relative within {self.s.max_experiment_days:.0f} days",
+                                  experiment_id=e.experiment_id)
+                continue
+            if e.status == "running":
+                due_look = (now % 1440) // 60 == look_hour and now - (e.start_minute or now) >= 20 * 60
+                final = now - (e.start_minute or now) >= self.s.max_experiment_days * 1440
+                if due_look or final:
+                    res = self.exp.look(e, now, cohorts, {"margin": margin}, final)
+                    e.looks.append({k: v for k, v in res.items() if k != "cohort_check"} | {"cohort_check": res.get("cohort_check")})
+                    with db.tx():
+                        self._apply_look(e, res, now, wf)
+                        e.save(db, now)
+                else:
+                    # hourly harm watch, stricter threshold because it is repeated (does not spend alpha)
+                    counts = self.exp.arm_counts(e, until=now)["ALL"]
+                    inc = counts.get(e.incumbent, (0, 0, 0))
+                    from .stats import Prop, compare
+                    bad = [o for o in e.arms if o != e.incumbent and o not in e.dropped
+                           and counts.get(o, (0, 0, 0))[1] >= self.s.harm_min_connected
+                           and compare(Prop(inc[2], inc[1]), Prop(counts[o][2], counts[o][1])).z < -2.33]
+                    if bad and set(bad) - set(e.dropped):
+                        with db.tx():
+                            self.exp.plan_drop(e, bad)
+                            e.save(db, now)
+                            db.decide(now, wf, "experiment_drop_arm", f"{dim}: dropping {bad} (significantly worse)",
+                                      evidence={o: counts.get(o) for o in bad} | {"incumbent": inc},
+                                      experiment_id=e.experiment_id)
+            elif e.status == "promoted":
+                dc = self.exp.decay_check(e, now, cohorts)
+                if dc["decayed"]:
+                    with db.tx():
+                        bl = self.exp.plan_rollback(e, dc["decayed"], now)
+                        for o in bl:
+                            black[o] = now + int(self.s.rollback_blacklist_days * 1440)
+                        db.kv_set(f"blacklist:{wf}", black)
+                        e.save(db, now)
+                        db.decide(now, wf, "decay_detected", f"{dim}: winner stopped winning in {dc['decayed']} —"
+                                  f" rolling back to incumbent", evidence=dc, experiment_id=e.experiment_id,
+                                  reasoning="recent winner-vs-holdout lift is significantly below the lift measured at"
+                                            " promotion (z<-2.33) or significantly negative")
+                    ctx["kinds"].append("decay_rollback")
+                    ctx["urgent"] = True
+
+    def _apply_look(self, e: Experiment, res: dict, now: int, wf: int):
+        a = res["action"]
+        if a in ("promote", "promote_cohorts"):
+            self.exp.plan_promotion(e, res)
+            self.db.decide(now, wf, "experiment_winner",
+                           f"{e.dim}: winner {e.winner} (look t={res['t']}, alpha_look={res.get('alpha_look')})",
+                           evidence=res, experiment_id=e.experiment_id,
+                           reasoning="Holm-adjusted one-sided z-test on engagement at the O'Brien-Fleming nominal level"
+                                     " for this look; guardrail and per-cohort harm checks passed; highest 80% lower"
+                                     " confidence bound chosen")
+        elif a == "no_winner":
+            self.exp.plan_no_winner(e)
+            self.db.decide(now, wf, "experiment_no_winner", f"{e.dim}: no significant winner at horizon — keep"
+                           f" incumbent {e.incumbent}", evidence=res, experiment_id=e.experiment_id,
+                           reasoning="insufficient evidence keeps the incumbent")
+        elif a == "drop":
+            self.exp.plan_drop(e, res["drop"])
+            self.db.decide(now, wf, "experiment_drop_arm", f"{e.dim}: dropping {res['drop']}", evidence=res,
+                           experiment_id=e.experiment_id)
+        else:
+            self.db.decide(now, wf, "experiment_look", f"{e.dim}: look t={res.get('t')} — continue", evidence=res,
+                           experiment_id=e.experiment_id)
+
+    # ---- desired config
+    def desired_config(self, wf, spec, cfg, dids, ctx) -> dict:
+        db = self.db
+        locks = ctx["locks"]
+        new = copy.deepcopy(cfg)
+        comps = ctx.setdefault("components", {})
+        cohorts = load_cohorts(db, wf, ("proposed", "live"))
+        ours = [c.to_config() for c in cohorts]
+        if cohorts and "cohorts" not in locks and "schedule" not in locks:
+            if not cfg.get("cohorts") or cfg["cohorts"] == ours:
+                new["cohorts"] = ours
+                sch = db.kv_get(f"schedule:{wf}", {})
+                if sch.get("hour_weights"):
+                    new["schedule"] = {"hour_weights": sch["hour_weights"],
+                                       "lead_preferred_hour": cfg["schedule"].get("lead_preferred_hour", {})}
+                    if new["schedule"] != cfg["schedule"]:
+                        comps["schedule"] = {"summary": f"call-hour weights for {len(sch['hour_weights'])} cohorts",
+                                             "dry_run": sch.get("dry_run")}
+        if "caller_id" not in locks:
+            cur = cfg["allocations"]["default"]["caller_id"]
+            tgt = self.did_target(spec["options"]["caller_id"], dids, cur)
+            removing_bad = any(dids.get(d, {}).get("state") == "degraded" and w > 0 for d, w in cur.items())
+            if tv_distance(cur, tgt) >= self.s.did_min_tv_change or removing_bad:
+                new["allocations"]["default"]["caller_id"] = tgt
+                comps["caller_id"] = {"summary": "caller IDs: " + ", ".join(f"{d} {w:.0%}" for d, w in sorted(tgt.items())),
+                                      "health": ctx["evidence"].get("caller_id"), "urgent": removing_bad}
+        live_ids = {c["id"] for c in new.get("cohorts", [])}
+        for dim, e in Experiment.load_active(db, wf).items():
+            if dim in locks or e.status == "aborted":
+                continue
+            plan = e.design if e.status in ("designed", "running") else e.plan
+            plan = {"default": plan} if e.status in ("designed", "running") else plan
+            for scope, dist in plan.items():
+                if scope != "default" and scope not in live_ids:
+                    continue
+                if scope == "default":
+                    new["allocations"]["default"][dim] = dict(dist)
+                else:
+                    new["allocations"].setdefault(scope, {})[dim] = dict(dist)
+            if _alloc_changed(cfg, new, dim):
+                comps[dim] = {"summary": f"{dim}: {e.status} " + "; ".join(
+                    f"{sc}={','.join(f'{o} {w:.0%}' for o, w in sorted(d.items()))}" for sc, d in plan.items()),
+                    "experiment_id": e.experiment_id, "status": e.status, "evidence": e.looks[-1] if e.looks else
+                    {"design": e.design, "n_plan": e.n_plan, "achieved_mde": e.achieved_mde}}
+        if ctx.get("prompt_fix") and "prompt_version_fix" not in locks:
+            iid, d = ctx["prompt_fix"]
+            new["prompt_version"] = d["fix_prompt"]
+            comps["prompt_version"] = {"summary": f"revert unsafe prompt {d['bad_prompt']} -> {d['fix_prompt']}",
+                                       "incident_id": iid, "validation": d.get("validation")}
+        return new
+
+    # ---- routing through governance
+    def route(self, wf, spec, cur, desired, ctx):
+        db, now = self.db, self.now
+        cfg = cur["config"]
+        dims = changed_dims(cfg, desired)
+        if not dims:
+            return
+        pol = spec["governance"]["auto_apply"]
+        comps = ctx.get("components", {})
+        wid = spec["workflow_id"]
+        open_p = self.gov.open_proposal(wf)
+        prompt_fix = "prompt_version" in dims
+        did_urgent = bool(comps.get("caller_id", {}).get("urgent"))
+
+        # 1) prompt incident: a focused approval request (prompt only), emergency slot
+        if prompt_fix:
+            fix_cfg = copy.deepcopy(cfg)
+            fix_cfg["prompt_version"] = desired["prompt_version"]
+            if open_p is None or open_p[2] != "incident":
+                ok, why = self.gov.submit_window(spec, now)
+                ok2, why2 = self.gov.can_request(wf, spec, now, emergency=True)
+                if ok and ok2:
+                    self._submit(wf, spec, cur, fix_cfg, {"prompt_version": comps["prompt_version"]}, "incident",
+                                 emergency=True)
+                    return
+                self._hold(wf, f"prompt fix waiting: {why if not ok else why2}")
+            dims = [d for d in dims if d != "prompt_version"]
+            desired = copy.deepcopy(desired)
+            desired["prompt_version"] = cfg["prompt_version"]
+
+        auto_ok_dims = {d for d in dims if pol.get("enabled") and d in pol.get("allowed_dims", [])
+                        and d not in self.s.customer_facing_dims and d != "cohorts"}
+        approval_dims = [d for d in dims if d not in auto_ok_dims]
+
+        # 2) urgent operational fix (degraded caller ID) via auto-apply, ramped within max_shift
+        if did_urgent and "caller_id" in auto_ok_dims:
+            if self._auto_step(wf, spec, cur, desired, ["caller_id"], urgent=True):
+                return
+
+        # 3) approval-route changes, batched into one request
+        if approval_dims:
+            if open_p is not None:
+                return  # one open proposal per workflow: wait
+            ok, why = self.gov.submit_window(spec, now)
+            emergency = did_urgent or ctx.get("urgent", False)
+            ok2, why2 = self.gov.can_request(wf, spec, now, emergency=emergency)
+            if ok and ok2:
+                self._submit(wf, spec, cur, desired, comps, "routine" if not emergency else "urgent",
+                             emergency=emergency)
+                return
+            self._hold(wf, f"{approval_dims} waiting: {why if not ok else why2}")
+        # 4) operational changes we may auto-apply now (only when nothing is pending, so we don't stale it)
+        if auto_ok_dims and open_p is None:
+            self._auto_step(wf, spec, cur, desired, sorted(auto_ok_dims), urgent=False)
+
+    def _hold(self, wf, why):
+        key = f"hold:{wf}"
+        if self.db.kv_get(key) != why:
+            with self.db.tx():
+                self.db.kv_set(key, why)
+                self.db.decide(self.now, wf, "hold", why,
+                               reasoning="governance timing/fatigue rules: send when an approver is there and can"
+                                         " answer before expiry, within the request budget")
+
+    def _auto_step(self, wf, spec, cur, desired, dims, urgent) -> bool:
+        cfg = cur["config"]
+        pol = spec["governance"]["auto_apply"]
+        step = copy.deepcopy(cfg)
+        for d in dims:
+            if d == "schedule":
+                if desired.get("cohorts") != cfg.get("cohorts"):
+                    continue  # schedule references cohorts that aren't live yet
+                step["schedule"] = desired["schedule"]
+            elif d in AGENT_DIMS:
+                step["allocations"]["default"][d] = desired["allocations"]["default"][d]
+        if not changed_dims(cfg, step):
+            return False
+        ms = pol.get("max_shift", 0.0)
+        shift = max_shift(cfg, step)
+        ramp = None
+        if shift > ms + 1e-9:
+            # ramp caller_id toward target by at most max_shift per step, >= 1h apart, cumulative cap per day
+            last = self.db.q1("SELECT MAX(created_minute) FROM proposals WHERE wf=? AND route='auto' AND state='APPLIED'",
+                              (wf,))[0]
+            if last is not None and self.now - last < self.s.ramp_min_gap_minutes:
+                return False
+            moved = self.db.kv_get(f"ramp:{wf}:{self.now // 1440}", 0.0)
+            budget = self.s.ramp_daily_shift_multiple * ms - moved
+            frac = min(ms, budget) / shift if shift else 0
+            if frac <= 0.01:
+                self._hold(wf, "auto-apply ramp budget for today used")
+                return False
+            a = cfg["allocations"]["default"]["caller_id"]
+            b = step["allocations"]["default"]["caller_id"]
+            mix = {k: a.get(k, 0) + (b.get(k, 0) - a.get(k, 0)) * frac * 0.999 for k in set(a) | set(b)}
+            step["allocations"]["default"]["caller_id"] = {k: round(v, 4) for k, v in mix.items() if v > 1e-4}
+            ramp = {"target": b, "fraction": round(frac, 3)}
+            shift = max_shift(cfg, step)
+        comps = {}
+        body = {"proposal_id": self.gov.new_id(spec["workflow_id"], self.now), "base_version": cur["version"],
+                "proposed_config": step,
+                "rationale": self._rationale(wf, cfg, step, urgent),
+                "evidence": {"caller_id": self.db.kv_get(f"did:{wf}"), "ramp": ramp,
+                             "schedule_dry_run": (self.db.kv_get(f"schedule:{wf}") or {}).get("dry_run")}}
+        state, resp = self.gov.auto_apply(wf, spec["workflow_id"], "urgent" if urgent else "operational", body, self.now)
+        with self.db.tx():
+            if state == "APPLIED":
+                self.db.kv_set(f"ramp:{wf}:{self.now // 1440}",
+                               self.db.kv_get(f"ramp:{wf}:{self.now // 1440}", 0.0) + shift)
+            self.db.decide(self.now, wf, "auto_apply", f"auto-apply {changed_dims(cfg, step)} -> {state}"
+                           + (f" (ramp {ramp['fraction']:.0%} of the way)" if ramp else ""),
+                           reasoning=body["rationale"], evidence={"response": resp, "shift": round(shift, 3),
+                                                                  "max_shift": ms, "ramp": ramp},
+                           proposal_id=body["proposal_id"], config_version=(resp or {}).get("version"),
+                           outcome=state)
+        return state == "APPLIED"
+
+    def _did_text(self, wf) -> str:
+        mem = self.db.kv_get(f"did:{wf}", {})
+        bad = [d for d, v in mem.items() if v.get("state") == "degraded"]
+        return (("Move traffic off degraded caller IDs " + ", ".join(bad) + ". " if bad else "")
+                + "Spread dials evenly over healthy numbers (lower per-number volume), 5% probe on untested"
+                  " numbers so their health is measured before they carry real volume.")
+
+    def _rationale(self, wf, old, new, urgent) -> str:
+        parts = []
+        dims = changed_dims(old, new)
+        if "caller_id" in dims:
+            parts.append(self._did_text(wf))
+        if "schedule" in dims:
+            parts.append("Call each cohort in the hours its own history shows the best pickup (smoothed estimates"
+                         " from pre-D0 history; weights clipped to [0.25, 4] so no hour is starved).")
+        return " ".join(parts) or "operational adjustment"
+
+    # ---- proposal assembly (C10)
+    def _submit(self, wf, spec, cur, desired, comps, kind, emergency):
+        db, now = self.db, self.now
+        cfg = cur["config"]
+        dims = changed_dims(cfg, desired)
+        diff = {}
+        for d in dims:
+            if d == "cohorts":
+                diff[d] = {"before": [c["id"] for c in cfg.get("cohorts", [])],
+                           "after": [c["id"] for c in desired.get("cohorts", [])]}
+            elif d == "schedule":
+                diff[d] = {"hour_weights_after": desired["schedule"]["hour_weights"]}
+            elif d == "prompt_version":
+                diff[d] = {"before": cfg["prompt_version"], "after": desired["prompt_version"]}
+            else:
+                scopes = set(cfg["allocations"]) | set(desired["allocations"])
+                diff[d] = {sc: {"before": _dist(cfg, sc, d), "after": _dist(desired, sc, d)} for sc in sorted(scopes)
+                           if tv_distance(_dist(cfg, sc, d), _dist(desired, sc, d)) > 1e-9}
+        affected = self.affected_leads(wf, spec, cfg, desired, dims)
+        impact, impact_detail = self.impact(wf, spec, comps, dims, kind)
+        summary = "; ".join(c["summary"] for k, c in comps.items() if k in dims or (k == "schedule" and "cohorts" in dims))
+        if "cohorts" in dims and "schedule" not in comps:
+            summary = f"define cohorts {[c['id'] for c in desired['cohorts']]}; " + summary
+        dry = {k: v.get("dry_run") or v.get("evidence") or v.get("validation") or v.get("health")
+               for k, v in comps.items() if k in dims or k == "schedule"}
+        dry["method_note"] = ("all figures replay our own recorded calls; experiment arms only count calls that actually"
+                              " ran with that variant")
+        body = {"proposal_id": self.gov.new_id(spec["workflow_id"], now), "workflow_id": spec["workflow_id"],
+                "base_version": cur["version"], "proposed_config": desired,
+                "change_summary": summary[:300] or f"update {', '.join(dims)}",
+                "diff": diff, "affected_leads": affected, "dry_run": dry, "impact_score": round(impact, 3),
+                "rationale": self._proposal_rationale(wf, comps, dims, kind),
+                "evidence": {"impact_detail": impact_detail,
+                             "experiments": {k: v.get("experiment_id") for k, v in comps.items() if v.get("experiment_id")}},
+                "expires_in_hours": spec["governance"]["proposal_ttl_hours"]}
+        if "prompt_version" in dims:
+            body["evidence"]["validation_run_id"] = comps["prompt_version"]["validation"]["validation_run_id"]
+            body["evidence"]["incident_id"] = comps["prompt_version"]["incident_id"]
+        state, resp = self.gov.submit(wf, spec["workflow_id"], kind, body, now)
+        with db.tx():
+            db.decide(now, wf, "proposal_submitted", f"{body['proposal_id']} -> {state}: {body['change_summary']}",
+                      reasoning=body["rationale"], evidence={"diff": diff, "affected_leads": affected,
+                                                             "impact_score": body["impact_score"],
+                                                             "impact_detail": impact_detail, "dry_run": dry},
+                      proposal_id=body["proposal_id"], approval_id=(resp or {}).get("approval_id"), outcome=state,
+                      incident_id=body["evidence"].get("incident_id"))
+            if "prompt_version" in dims and state == "PENDING":
+                iid = comps["prompt_version"]["incident_id"]
+                d = json.loads(db.q1("SELECT data FROM incidents WHERE incident_id=?", (iid,))[0])
+                d["proposal_id"] = body["proposal_id"]
+                db.x("UPDATE incidents SET state='proposed', data=? WHERE incident_id=?", (dumps(d), iid))
+            db.kv_set(f"hold:{wf}", None)
+
+    def _proposal_rationale(self, wf, comps, dims, kind) -> str:
+        out = []
+        if "prompt_version" in dims:
+            c = comps["prompt_version"]
+            v = c.get("validation") or {}
+            out.append(f"Safety incident {c['incident_id']}: the live prompt is producing hallucinations above the"
+                       f" workflow's own baseline. {c['summary']}; validation run {v.get('validation_run_id')} passed at"
+                       f" {v.get('pass_rate')}. This reverses a recent prompt change and is sent for your approval rather"
+                       f" than applied silently.")
+        for d in ("welcome_message", "voice"):
+            if d in comps and d in dims:
+                c = comps[d]
+                st = c.get("status")
+                out.append({"designed": f"Start a controlled test of {d}: the current option keeps most traffic, the"
+                                        f" alternatives share the rest; a winner is declared only by a pre-registered"
+                                        f" statistical rule (see evidence).",
+                            "promoting": f"{d}: promote the statistically significant winner, keeping a holdout on the"
+                                         f" previous option to detect if the effect fades.",
+                            "concluding": f"{d}: the test found no significant winner — return all traffic to the"
+                                          f" current option.",
+                            "rolling_back": f"{d}: the promoted option stopped beating the holdout — roll back.",
+                            "running": f"{d}: drop an alternative that is significantly worse."}.get(st, d))
+        if "caller_id" in dims:
+            out.append(self._did_text(wf))
+        if "schedule" in dims or "cohorts" in dims:
+            out.append("Cohort call-hour weights from history: each age/feature group is called more in the hours"
+                       " it actually picks up (who is called when; capacity, windows and cadence unchanged).")
+        return " ".join(out) or "configuration update"
+
+    def affected_leads(self, wf, spec, cfg, new, dims) -> int:
+        """Active leads (not concluded, inside cadence) whose experience changes. For next_campaign_only the
+        customer-facing part only reaches the next campaign: count its expected size."""
+        db, now = self.db, self.now
+        day = now // 1440
+        L = len(spec["cadence"])
+        active = db.q1("SELECT COUNT(*) FROM leads WHERE wf=? AND campaign_day>? AND concluded_minute IS NULL",
+                       (wf, day - L))[0]
+        if spec["mid_flight"] == "next_campaign_only" and not ({"schedule", "prompt_version"} & set(dims)):
+            return int(spec["daily_batch"]["size"])
+        return int(active)
+
+    def impact(self, wf, spec, comps, dims, kind) -> tuple[float, dict]:
+        """impact = clip(lift_lcb/0.10, 0, 1) x share affected; exploration 0.15; incident >= 0.8."""
+        detail = {}
+        if "prompt_version" in dims:
+            return 0.9, {"basis": "safety incident fix (validated)"}
+        best = 0.0
+        for d in ("welcome_message", "voice"):
+            c = comps.get(d)
+            if not c or d not in dims:
+                continue
+            ev = c.get("evidence") or {}
+            if c.get("status") == "promoting" and ev.get("winner"):
+                a = ev["arms"][ev["winner"]]
+                inc = ev["incumbent"]
+                from .stats import Prop, compare
+                cmp_ = compare(Prop(inc["engaged"], inc["connected"]), Prop(a["engaged"], a["connected"]))
+                lcb_rel = cmp_.lcb(0.8) / (inc["engaged"] / inc["connected"]) if inc["connected"] else 0
+                score = min(max(lcb_rel / 0.10, 0), 1) * (1 - self.s.holdout_share)
+                detail[d] = {"lift_lcb_rel": round(lcb_rel, 4), "score": round(score, 3)}
+                best = max(best, score)
+            elif c.get("status") == "rolling_back":
+                detail[d] = {"basis": "decay rollback", "score": 0.6}
+                best = max(best, 0.6)
+            else:
+                detail[d] = {"basis": "exploration (expected lift unknown)", "score": 0.15}
+                best = max(best, 0.15)
+        if "schedule" in comps and ("schedule" in dims or "cohorts" in dims):
+            dl = (comps["schedule"].get("dry_run") or {}).get("rel_lift", 0) or 0
+            sc = min(max(dl / 0.10, 0), 1) * 0.5   # dry run is an upper bound: halve it
+            detail["schedule"] = {"dry_run_rel_lift": dl, "score": round(sc, 3)}
+            best = max(best, sc)
+        if "caller_id" in dims:
+            sc = 0.7 if comps.get("caller_id", {}).get("urgent") else 0.1
+            detail["caller_id"] = {"score": sc}
+            best = max(best, sc)
+        return best, detail
+
+    # ------------------------------------------------------------------ observability (C14)
+    def _metrics(self, n_events: int, ingest_s: float, st: dict):
+        db, now = self.db, self.now
+        lag = st["sim_minute"] - (db.q1("SELECT MAX(until_minute) FROM chunks")[0] or 0)
+        with db.tx():
+            db.metric(now, "ingest_events", n_events)
+            db.metric(now, "ingest_seconds", ingest_s)
+            db.metric(now, "ingest_lag_minutes", lag)
+            if now % 60 == 0:
+                st = self.sim.state()
+                db.metric(now, "credits_remaining", st["credits_remaining"])
+                db.metric(now, "open_proposals", db.q1("SELECT COUNT(*) FROM proposals WHERE state IN"
+                                                       " ('PENDING','APPROVED','APPLYING')")[0])
+                db.metric(now, "decisions_last_hour", db.q1("SELECT COUNT(*) FROM decisions WHERE minute>? AND minute<=?",
+                                                            (now - 60, now))[0])
+                db.metric(now, "rss_mb", _rss_mb())
+            if now % 1440 == 0:
+                d = now // 1440 - 1
+                w0 = self.day_wall.get(d)
+                if w0:
+                    db.metric(now, "wall_seconds_per_sim_day", time.time() - w0, {"day": d})
+                    log.info("D%d done: %.1fs wall, credits %.0f, ingest total %d events", d, time.time() - w0,
+                             st["credits_remaining"], self.ing.events_total)
+
+
+def _alloc_changed(old, new, dim) -> bool:
+    keys = set(old["allocations"]) | set(new["allocations"])
+    return any(tv_distance(_dist(old, k, dim), _dist(new, k, dim)) > 1e-9 for k in keys)
+
+
+def _rss_mb() -> float:
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    except ImportError:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PMC(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+            c = PMC()
+            c.cb = ctypes.sizeof(PMC)
+            ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+            return c.PeakWorkingSetSize / 2 ** 20
+        except Exception:
+            return -1.0

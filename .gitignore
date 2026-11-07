@@ -2,3 +2,12 @@ runs/
 __pycache__/
 *.pyc
 .venv/
+state/
+*.db
+*.db-wal
+*.db-shm
+*.old
+*.old-wal
+*.old-shm
+.pytest_cache/
+docs/drafts/
