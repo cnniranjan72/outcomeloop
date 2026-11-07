@@ -272,11 +272,13 @@
   - *Winners stay local.* Winners update only their own workflow.
   - *Wishlist.* Built: caller-ID health (C5) and the consolidated supervisor view (C11).
 - **Pushed back / declined.**
-  - **Per-person call-time is cut** in favour of cohort-level call-time (`hour_weights` per cohort).
+  - **Per-person call time is not rolled out blindly**; cohort-level call time (`hour_weights` per cohort) is the
+    default, and per-person preferred hours run as a randomised, self-terminating experiment (`persontime.py`).
     - Per-person evidence is a handful of dials at ~30 % pickup, so a person's "best hour" is mostly noise.
     - `lead_preferred_hour` multiplies weight by 6 in the chosen hour but by **0.25 in every other hour**, so a
       wrong guess actively pushes the person out of hours that worked.
-    - Cohort-level weights capture most of the time-of-day signal at a sample size we can trust.
+    - So treated and control people are compared on pickup per dial; the feature stays only on evidence and only
+      where `schedule` is auto-appliable (ablation over 16 runs: +0.93 pp, `reports/ablation_person_time.md`).
   - *Rank the queue by impact score.* Accepted, but with one open proposal per workflow, ranking applies
     across workflows, not within one.
 - **Claims that are wrong against the actual policy/contract.**
@@ -292,8 +294,9 @@
   > power, capped at 5 days. The cost: effects under ~5 % mostly go undetected, and some real winners expire
   > unproven. In exchange, false winners stay rare. The impact score is a conservative expected lift × share
   > affected, so ranking by it is meaningful. Caller-ID health and the supervisor view are built. Per-person
-  > call time is cut: a handful of dials per person can't pick a best hour, and the 0.25× penalty punishes
-  > wrong guesses. Cohort-level timing is in.
+  > call time runs as a randomised experiment, not a rollout: a handful of dials per person rarely picks a best
+  > hour, and the 0.25× penalty punishes wrong guesses, so it stays only where treated people out-pick controls.
+  > Cohort-level timing is the default.
 
 ### 06 — Aryamann, CTO
 
@@ -310,7 +313,8 @@
     - 40 % of credits is an incident reserve. `[RESULT: credits used on public_01/02]`
   - *Scale.* Transactional, idempotent chunk ingestion. `[MEASURED: see reports/public_03.md]` We state what
     breaks first at 10× and how we'd partition by tenant and workflow.
-  - *Choosing.* Per-person call-time is cut, along with the other cuts in §2, each with a drafted message.
+  - *Choosing.* Per-person call time ships as an experiment rather than a rollout; the cuts in §2 each have a
+    drafted message.
   - *Own it next month.* There is a runbook for each page and a restart procedure. `[RESULT: docs link]`
   - *Trust the contract.* Each memo claim was checked against `GET /workflows` policy; the false ones are
     listed above.
@@ -326,7 +330,7 @@
 - **The reply you'd send them.**
 
   > Aryamann, I chose depth over breadth: governance, experiments with cohort harm checks and decay rollback,
-  > caller-ID health, hallucination response, and a full audit trail. Per-person call-time and the other cuts
+  > caller-ID health, hallucination response, and a full audit trail. Per-person call time runs as an experiment, and the cuts
   > are listed with reasons and drafted messages to the people affected. Every change on a client agent can be
   > explained from our own store in one command. Credits go first to known-good fixes, and 40 % is reserved for
   > incidents. On scale: [MEASURED: see reports/public_03.md]. The first bottleneck at 10× isn't compute but

@@ -148,7 +148,8 @@ def main():
     # ---------------------------------------------------------------- stakeholder / assumption corrections
     sh = sh.replace(" We also apply a relative reading (drop > margin × 10 = 20 %) and enforce\n   whichever is stricter.", "")
     sh = re.sub(r"We check welcome × voice interaction before promoting a\s+combination rather than assuming there is none\.",
-                "We assume no welcome × voice interaction (a known weakness, §13); the data to check it is stored.", sh)
+                "Before promoting a winner we check it still beats the incumbent within the other dimension's dominant option "
+                "(`_interaction`); a full welcome × voice interaction model is not fitted (§13).", sh)
     sh = sh.replace("MDE 8 % relative", "MDE 10 % relative").replace("an 8 % relative lift", "a 10 % relative lift")
     sh = sh.replace("~1,600–2,000 connected calls per arm", "~850–1,300 connected calls per challenger")
     sh = sh.replace("One challenger at a 40 % share needs about 4–5 days.", "A two-challenger test at 20 % each needs 4–6 days.")

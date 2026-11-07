@@ -78,7 +78,7 @@ Wire these signals to the pager as follows.
 | Ingest lag in window | `ingest_lag_minutes` > 30 while workflows are inside their dialling windows | `ingest_seconds` and `advance_seconds` metrics, simulator health | If ingest is slow, check disk and DB size. If the simulator is slow, it is not ours. Lag outside dialling windows is normal, because no chunks arrive. |
 | Approved but not applied | Any `proposal_lapsed` decision, or a proposal in `APPROVED` for more than 1 tick | `proposals.notes` for that id, and `why <wf> --at <time>` | `notes` holds the apply error. `STALE` is correct behaviour after a supervisor edit, and the next plan re-proposes. Repeated apply errors with another code are a bug: capture the DB. |
 | Credits near reserve | `credits_remaining` < 1.1 × 40 % of `kv credits_start` | `credits_ledger` | See section 6. |
-| Repeated decide errors | More than 3 `error` decisions per hour for one workflow | The `summary` holds the exception text | The other workflows keep running. Capture the DB copy and log, then fix and redeploy. Restarting is safe. |
+| Repeated decide errors (`workflow_stuck`) | 3 or more `error` decisions for one workflow within 3 sim-hours (`alerts` reports it as `workflow_stuck`) | The `summary` holds the exception text | The other workflows keep running. Capture the DB copy and log, then fix and redeploy. Restarting is safe. |
 
 ### Do not page (review in business hours or let the supervisor view show it)
 

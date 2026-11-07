@@ -4,8 +4,11 @@
 #   docker run --rm outcomeloop scripts/graceful_stop_test.sh
 set -euo pipefail
 export OUTCOMELOOP_DB=state/graceful.db PYTHONUTF8=1
-python -m sim serve --scenario scenarios/public_01_dev.yaml --run-dir runs/graceful --port 8700 > /tmp/sim.log 2>&1 &
-until curl -sf http://127.0.0.1:8700/health >/dev/null; do sleep 1; done
+rm -f state/graceful.db*
+python -m sim serve --scenario scenarios/public_01_dev.yaml --run-dir runs/graceful --port 8700 --force > /tmp/sim.log 2>&1 &
+SIM=$!
+trap 'kill $SIM 2>/dev/null || true' EXIT
+until curl -sf http://127.0.0.1:8700/health >/dev/null; do kill -0 $SIM 2>/dev/null || { cat /tmp/sim.log; exit 1; }; sleep 1; done
 ./run.sh http://127.0.0.1:8700 > /tmp/ctl1.log 2>&1 &
 RUN=$!
 sleep 25

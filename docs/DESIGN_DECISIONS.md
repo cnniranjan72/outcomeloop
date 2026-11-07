@@ -91,8 +91,9 @@ still needs validation to confirm (§8).
 ## 5. Experiments (C6) — welcome_message × voice
 
 * **Factorial**: both dimensions are randomised independently per dial, so each dimension's arms are compared
-  on all traffic (marginal analysis). Interaction is **not** checked (assumption: no strong
-  welcome × voice interaction; listed as a known weakness — the data to check it is stored).
+  on all traffic (marginal analysis). Before promotion a winner must also beat the
+  incumbent within the other dimension's dominant option (`_interaction`), so a winner that only wins next to a
+  minor option is blocked; a full interaction model is not fitted.
 * **Allocation**: incumbent keeps `1 − s`, challengers split `s = 0.40` evenly. (Dunnett's √k rule would give
   ~0.6 to challengers; we trade power for bounded harm — see compliance memo.)
 * **Decision metric**: engagement, always — welcome and voice are heard only after connect, so they cannot move
@@ -134,8 +135,9 @@ next to a fresh number is not mistaken for a spam flag (found via the crash-reco
 `hour_weights[cohort][h] = clip((p̂(cohort,h)/p̄(cohort))^γ, 0.25, 4)` with γ = 2, using smoothed (empirical
 Bayes toward the workflow hour profile) pickup estimates from history. Never 0 (a 0 can strand capacity).
 Dry run = historical re-weighting estimate of pickup holding per-hour dial volume fixed (ignores pool depletion
-— stated in the proposal). Per-person `lead_preferred_hour` is **cut** (thin per-person evidence; 0.25×
-penalty outside the preferred hour makes errors expensive).
+— stated in the proposal). Per-person `lead_preferred_hour` is **not rolled out blindly** (thin per-person evidence; 0.25×
+penalty outside the preferred hour makes errors expensive): it runs as a randomised, self-terminating experiment
+(`persontime.py`) and stays only on evidence.
 
 ## 8. Incidents — hallucination (C8)
 

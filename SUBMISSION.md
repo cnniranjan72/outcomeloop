@@ -39,7 +39,7 @@
    measure pickup per arm as a guardrail. Randomisation is per dial, so a pickup gap between arms would show a
    bug or leakage, not a real effect.
 5. **`welcome_message`, `voice` and `caller_id` are sampled independently per dial** (SIMULATOR §3). That is
-   what makes a factorial, marginal analysis valid. We assume no welcome × voice interaction (a known weakness, §13); the data to check it is stored.
+   what makes a factorial, marginal analysis valid. Before promoting a winner we check it still beats the incumbent within the other dimension's dominant option (`_interaction`); a full welcome × voice interaction model is not fitted (§13).
 6. **An approval cannot be withdrawn.** There is no cancel endpoint. Two open proposals on one workflow would
    race (the second goes `stale_base_version` on apply), so we keep **one open proposal per workflow** and
    batch new changes into the next changeset.
@@ -312,11 +312,13 @@ stub.
   - *Winners stay local.* Winners update only their own workflow.
   - *Wishlist.* Built: caller-ID health (C5) and the consolidated supervisor view (C11).
 - **Pushed back / declined.**
-  - **Per-person call-time is cut** in favour of cohort-level call-time (`hour_weights` per cohort).
+  - **Per-person call time is not rolled out blindly**; cohort-level call time (`hour_weights` per cohort) is the
+    default, and per-person preferred hours run as a randomised, self-terminating experiment (`persontime.py`).
     - Per-person evidence is a handful of dials at ~30 % pickup, so a person's "best hour" is mostly noise.
     - `lead_preferred_hour` multiplies weight by 6 in the chosen hour but by **0.25 in every other hour**, so a
       wrong guess actively pushes the person out of hours that worked.
-    - Cohort-level weights capture most of the time-of-day signal at a sample size we can trust.
+    - So treated and control people are compared on pickup per dial; the feature stays only on evidence and only
+      where `schedule` is auto-appliable (ablation over 16 runs: +0.93 pp, `reports/ablation_person_time.md`).
   - *Rank the queue by impact score.* Accepted, but with one open proposal per workflow, ranking applies
     across workflows, not within one.
 - **Claims that are wrong against the actual policy/contract.**
@@ -332,8 +334,9 @@ stub.
   > power, capped at 5 days. The cost: effects under ~5 % mostly go undetected, and some real winners expire
   > unproven. In exchange, false winners stay rare. The impact score is a conservative expected lift × share
   > affected, so ranking by it is meaningful. Caller-ID health and the supervisor view are built. Per-person
-  > call time is cut: a handful of dials per person can't pick a best hour, and the 0.25× penalty punishes
-  > wrong guesses. Cohort-level timing is in.
+  > call time runs as a randomised experiment, not a rollout: a handful of dials per person rarely picks a best
+  > hour, and the 0.25× penalty punishes wrong guesses, so it stays only where treated people out-pick controls.
+  > Cohort-level timing is the default.
 
 ### 06 — Aryamann, CTO
 
@@ -350,7 +353,8 @@ stub.
     - 40 % of credits is an incident reserve. Credits used: 3 on public_01, 6 on public_02, of 200.
   - *Scale.* Transactional, idempotent chunk ingestion. `ingest 40,806 events/s, 42–53 s of controller time per simulated day, 1046 MB peak memory` We state what
     breaks first at 10× and how we'd partition by tenant and workflow.
-  - *Choosing.* Per-person call-time is cut, along with the other cuts in §2, each with a drafted message.
+  - *Choosing.* Per-person call time ships as an experiment rather than a rollout; the cuts in §2 each have a
+    drafted message.
   - *Own it next month.* There is a runbook for each page and a restart procedure. (`docs/OPERATIONS.md`)
   - *Trust the contract.* Each memo claim was checked against `GET /workflows` policy; the false ones are
     listed above.
@@ -366,7 +370,7 @@ stub.
 - **The reply you'd send them.**
 
   > Aryamann, I chose depth over breadth: governance, experiments with cohort harm checks and decay rollback,
-  > caller-ID health, hallucination response, and a full audit trail. Per-person call-time and the other cuts
+  > caller-ID health, hallucination response, and a full audit trail. Per-person call time runs as an experiment, and the cuts
   > are listed with reasons and drafted messages to the people affected. Every change on a client agent can be
   > explained from our own store in one command. Credits go first to known-good fixes, and 40 % is reserved for
   > incidents. On scale: ingest 40,806 events/s, 42–53 s of controller time per simulated day, 1046 MB peak memory. The first bottleneck at 10× isn't compute but
@@ -717,7 +721,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
    rows over sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). Hourly rollups
    (`did_hour`, `arm_hour`) are now maintained inside each chunk's ingest transaction — recomputed per touched
    workflow-hour from the call rows, so they stay exactly-once under replay — and decisions read those instead:
-   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time. Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
+   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time in an isolated measurement (15–27 s decide in the final load run on a busier shared host, `reports/public_03.md`). Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
 2. **One SQLite writer.** Ingest at ~50k events/s is ~3 min/day at 10× — fine — but one process serialises
    ingest and decisions. Fix: partition workflows into shards (hash of `workflow_id`), one loop + checkpoint per
    shard, on the platform's Postgres with `calls` partitioned by day.
@@ -736,7 +740,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
   once (event counts equal to the simulator's), calls table equal to the simulator's call events, no proposal or
   approval applied twice, every simulator approval known to our store, nothing left in an uncertain state,
   experiments and incidents not duplicated and continuing under the same ids, credits accounted for, run finished.
-  Outcomes under kills: conclusion rate +26.5% vs baseline with 9 kills vs +24.6% uninterrupted, both on the final decision logic (commit `1ebe504`).
+  Outcomes under kills: conclusion rate +26.5% vs baseline with 9 kills vs +24.6% uninterrupted, both on the final decision logic (commit `51965ce`).
 * **The test found three real defects**, all fixed: a paid validation result could be lost between the ledger
   and the incident (now one transaction); a supervisor-prompt probe was cleared before the validation call, so a
   crash forgot a pending safety check (now cleared in the same transaction as the result); and a caller-ID
@@ -847,6 +851,7 @@ SQLite triggers.
 **Page on** (each message names the workflow and the decision row to read):
 - ingest lag > 30 sim-minutes after a tick, or no new chunk for > 2 ticks (the loop is blind);
 - `error` decisions > 5/hour or `run.sh` restarting the controller > 3/hour (crash loop);
+- `workflow_stuck`: ≥ 3 errors for one workflow within 3 sim-hours (one workflow failing quietly while the rest run);
 - credits within 10 % of the incident reserve (next incident may be unfixable);
 - an approval approved but not applied after 60 min (the 2 h apply window will lapse);
 - an incident open > 4 h without a fix proposal (needs a human).
@@ -954,7 +959,9 @@ How to read it, and what it taught us:
 * **Where we were harmful, and why.** public_01: 0 of 25 — none. public_02: 3 of 28 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.016, caller-ID health +0.039); nw_renewal v14 ['voice'] (engagement -0.010, caller-ID health +0.000); ks_cancel v16 ['welcome_message', 'voice'] (engagement -0.013, caller-ID health +0.000). These are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
 * **Decay.** The decaying welcome message (`W3`) was promoted on its early lift, then rolled back: its share fell
   to 0 within 3 days of the decay onset. That is slower than we'd like: with a 15 % holdout the
-  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative.
+  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. In the final
+  public_01 run W3 only won late (D4), and the decay test had not fired by the end: its share was still 0.85 on
+  days 5–7 (`reports/public_01_dev.md`). Late winners leave too little post-decay data before the run ends.
 * **Governance hygiene.** Across both runs: 22 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 2 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (3 on public_02), re-planned from fresh data.
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
   promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost.
@@ -966,7 +973,7 @@ How to read it, and what it taught us:
 | Thompson sampling / bandit allocation | Less regret during exploration | Every allocation change costs an approval (1–2/day); a bandit needs frequent re-allocation. Fixed 60/40 + early harm drop + sequential test fits the governance budget and gives a clean false-winner guarantee. |
 | Bayesian "probability to beat" winner rule | Intuitive for supervisors | Needs a prior and a decision threshold whose false-winner rate under optional stopping is not controlled by default. OBF spending + Holm gives a defensible α. We show lifts and z in the supervisor view instead. |
 | Fixed-horizon test only | Simplest valid test | Wastes days when a winner is obvious; sequential looks with α spending stop early without inflating error. |
-| Per-person call time applied to everyone | Product's summit headline | A wrong guess costs 0.25× weight; instead it runs as a randomised, self-terminating experiment and is kept only on evidence. Cohort-level weights capture the archetype signal from history. Cut. |
+| Per-person call time applied to everyone | Product's summit headline | A wrong guess costs 0.25× weight; instead it runs as a randomised, self-terminating experiment and is kept only on evidence. Cohort-level weights capture the archetype signal from history. Built as an experiment, not a rollout. |
 | Postgres + Redis in the assignment | SRE already runs them | Embedded SQLite = zero infrastructure on the grader box; schema is plain SQL, ports to Postgres. Redis adds nothing a durable checkpoint doesn't. |
 | Keep raw events only in memory, aggregates in DB | Faster | Compliance's "why did this customer hear this" needs per-call rows; recovery is simpler when the rows are the checkpointed truth. |
 | Auto-apply customer-facing changes where policy allows | Faster learning on Kestrel | Kestrel's supervisor asked to be told first; we route them through approval and accept the speed cost. |

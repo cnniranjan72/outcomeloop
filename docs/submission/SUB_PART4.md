@@ -22,7 +22,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
    rows over sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). Hourly rollups
    (`did_hour`, `arm_hour`) are now maintained inside each chunk's ingest transaction — recomputed per touched
    workflow-hour from the call rows, so they stay exactly-once under replay — and decisions read those instead:
-   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time. Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
+   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time in an isolated measurement (15–27 s decide in the final load run on a busier shared host, `reports/public_03.md`). Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
 2. **One SQLite writer.** Ingest at ~50k events/s is ~3 min/day at 10× — fine — but one process serialises
    ingest and decisions. Fix: partition workflows into shards (hash of `workflow_id`), one loop + checkpoint per
    shard, on the platform's Postgres with `calls` partitioned by day.
@@ -97,6 +97,7 @@ SQLite triggers.
 **Page on** (each message names the workflow and the decision row to read):
 - ingest lag > 30 sim-minutes after a tick, or no new chunk for > 2 ticks (the loop is blind);
 - `error` decisions > 5/hour or `run.sh` restarting the controller > 3/hour (crash loop);
+- `workflow_stuck`: ≥ 3 errors for one workflow within 3 sim-hours (one workflow failing quietly while the rest run);
 - credits within 10 % of the incident reserve (next incident may be unfixable);
 - an approval approved but not applied after 60 min (the 2 h apply window will lapse);
 - an incident open > 4 h without a fix proposal (needs a human).
@@ -147,7 +148,9 @@ at two random seeds. The table is the simulator grader's output:
 * **Where we were harmful, and why.** {{HARM_EXPLAIN}}
 * **Decay.** The decaying welcome message (`W3`) was promoted on its early lift, then rolled back: its share fell
   to 0 within {{DECAY_DAYS}} days of the decay onset. That is slower than we'd like: with a 15 % holdout the
-  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative.
+  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. In the final
+  public_01 run W3 only won late (D4), and the decay test had not fired by the end: its share was still 0.85 on
+  days 5–7 (`reports/public_01_dev.md`). Late winners leave too little post-decay data before the run ends.
 * **Governance hygiene.** {{GOV_LINE}}
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
   promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost.

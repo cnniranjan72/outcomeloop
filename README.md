@@ -116,7 +116,7 @@ negotiated:
 
 - Changing cadence, dialling windows or capacity. These are business-owned, and the controller only decides
   *who* is called in an hour and *how* the agent sounds.
-- Per-person call-time optimisation (`lead_preferred_hour`). This was cut: see C4.
+- Rolling out per-person call time (`lead_preferred_hour`) without evidence. It runs as a randomised experiment instead: see C4.
 - Letting an LLM decide anything. It only proposes prompt candidates, and validation plus a deterministic rule
   decide.
 - Sharing winners across tenants. A winner changes only its own workflow.
@@ -134,7 +134,7 @@ Status comes from the code in `src/outcomeloop/`, not from intent.
 | C3 | Bootstrapping from pre-D0 history | **Built** | `Controller.bootstrap`: cohort feature by likelihood-ratio test, smoothed call-hour weights, QA-flag reference rate. Experiment baselines use the last 7 days, which include history. |
 | C4 | Call-time optimisation | **Built** | Cohort-level `schedule.hour_weights` (`cohorts.schedule_weights`) plus per-person preferred hours as a randomised, self-terminating experiment (`persontime.py`; only where `schedule` is auto-appliable). Ablation over 16 runs: +0.93 pp (`reports/ablation_person_time.md`). |
 | C5 | Caller-ID health: detect, rotate, explore | **Built** | `detectors.did_health` (fast/slow windows) and the `Controller.detect_did` state machine (healthy/degraded/probe). Equal split over healthy numbers, rest then a time-boxed 2 % re-probe, ramped auto-apply. |
-| C6 | Welcome × voice experimentation | **Built** | `experiments.py`: factorial design, planned n, O'Brien-Fleming alpha spending as an explicit budget, Holm, guardrail, harm stopping, cohort harm check, stability check, one pre-registered extension. There is no welcome × voice interaction check. |
+| C6 | Welcome × voice experimentation | **Built** | `experiments.py`: factorial design, planned n, O'Brien-Fleming alpha spending as an explicit budget, Holm, guardrail, harm stopping, cohort harm check, stability check, one pre-registered extension. Interaction check within the other dimension's dominant option before promotion. |
 | C7 | Promotion, decay detection, rollback | **Built** | Promotion keeps a 15 % holdout. `decay_check` compares the current lift with the 80 % LCB of the lift at promotion. Rollback goes through approval and blacklists the option for 7 days. |
 | C8 | Hallucination incident response | **Built** | Validation probe of supervisor prompt edits, two-signal confirmation for flag-rate spikes, known-good prompts first then the LLM, deterministic selection, engagement verification after apply, 40 % credit reserve. |
 | C9 | Governance client | **Built** | `governance.py`: state machine, one open proposal per workflow, submit window based on worst-case latency, fatigue cap with incident slot and tenant preferences, expired = rejection, stale = re-plan, auto-apply only for operational dims with `max_shift` ramping, reconciliation. |
@@ -1008,7 +1008,8 @@ The report also gives per-tick p50/p95/max controller time, maximum ingest lag, 
 sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). `did_hour` and `arm_hour` are now
 maintained inside each chunk's ingest transaction — each touched workflow-hour is recomputed from the stored rows, so
 they stay exactly-once under replay — and decisions read them. Decide time fell from ~52–67 s to ~8–14 s per
-simulated day for ~+15 % ingest time.
+simulated day for ~+15 % ingest time in an isolated measurement (15–27 s in the final load run, on a busier
+shared host: `reports/public_03.md`).
 
 **Measured scaling.** 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
 
@@ -1320,7 +1321,7 @@ What each state means:
 4. Per-tenant credit and approver-attention budgets (C15).
 5. The supervisor view as an HTTP API plus the weekly change summary Compliance asked for.
 6. A slice-based heterogeneity search that proposes a refined cohort set (for example `lang = ta`).
-7. Per-person call time for people with consistent pickup history, A/B-tested against the cohort schedule.
+7. Extend the per-person call-time experiment to people returning from older campaigns.
 8. Pager integration for the signals in [Observability](#observability) (`outcomeloop alerts` already evaluates them).
 9. Impact score calibrated against realised lift.
 

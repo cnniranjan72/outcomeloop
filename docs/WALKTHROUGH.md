@@ -88,7 +88,7 @@ D3 13:30  ks_cancel    proposal_approved        controller ol-ks_cancel-5025-15:
 D3 13:30  ks_cancel    proposal_applied         controller ol-ks_cancel-5025-15: applied
 D3 13:30  ks_cancel    config_changed           controller_approved v9 by controller_approved: prompt_version
 D3 13:30  ks_cancel    incident_fix_applied     controller inc-ks_cancel-5025: prompt P1 live (v9)
-D3 18:00  ks_cancel    incident_verified        controller inc-ks_cancel-5025: after fix flag rate 0.0141 vs ref 0.0137 on 426 connected calls
+D3 18:00  ks_cancel    incident_verified        controller inc-ks_cancel-5025: after fix flag rate 0.0141 vs ref 0.0137 on 426 connected calls (an earlier run; the final run: 0.0146 on 478)
 …
 ```
 
@@ -180,7 +180,7 @@ Diff: {"prompt_version": {"after": "P1", "before": "P2"}}
   D3 13:30  proposal_approved        ol-ks_cancel-5025-15: approved by client approver
 
 ## What happened next (48h)
-  D3 18:00  incident_verified        inc-ks_cancel-5025: after fix flag rate 0.0141 vs ref 0.0137 on 426 connected calls
+  D3 18:00  incident_verified        inc-ks_cancel-5025: after fix flag rate 0.0141 vs ref 0.0137 on 426 connected calls (an earlier run; the final run: 0.0146 on 478)
   D4 11:00  experiment_look          welcome_message: look t=0.913 â€” continue
   D4 11:00  experiment_winner        voice: winner V3 (look t=0.843, alpha_look=0.0187)
   D4 12:00  did_health               caller ID D2: probe -> degraded

@@ -7,8 +7,11 @@ ARG="${1:-public_01_dev}"; OUT="${2:-reports}"
 if [[ -f "$ARG" ]]; then SCEN="$ARG"; NAME="$(basename "$ARG" .yaml)"; else SCEN="scenarios/${ARG}.yaml"; NAME="$ARG"; fi
 mkdir -p runs "$OUT"
 python -m sim baseline --scenario "$SCEN" --run-dir "runs/base_${NAME}" | tail -1
-python -m sim serve --scenario "$SCEN" --run-dir "runs/mine_${NAME}" --port 8700 > runs/sim.log 2>&1 &
-until curl -sf http://127.0.0.1:8700/health >/dev/null; do sleep 2; done
+python -m sim serve --scenario "$SCEN" --run-dir "runs/mine_${NAME}" --port 8700 --force > runs/sim.log 2>&1 &
+SIM=$!
+trap 'kill $SIM 2>/dev/null; wait $SIM 2>/dev/null || true' EXIT   # always stop our simulator (frees the port)
+until curl -sf http://127.0.0.1:8700/health >/dev/null; do kill -0 $SIM 2>/dev/null || { cat runs/sim.log; exit 1; }; sleep 2; done
+export OUTCOMELOOP_DB="state/${NAME}.db"; rm -f "$OUTCOMELOOP_DB" "$OUTCOMELOOP_DB-wal" "$OUTCOMELOOP_DB-shm"
 START=$(date +%s)
 set +e; ./run.sh http://127.0.0.1:8700 > "runs/ctl.log" 2>&1; RC=$?; set -e
 echo "run.sh exit=$RC in $(( $(date +%s) - START ))s"
