@@ -68,7 +68,7 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
                 degraded = True
             # a number on probe only has to show it is bad to stay out (low-risk action): lower bar
             if name != "long" and probing and opt in probing and n >= s.did_healthy_min_dials \
-                    and ratio < s.did_degraded_ratio and cmp_.z < -2.33:
+                    and ratio < s.did_degraded_ratio and cmp_.z < -2.33 and dropped:
                 degraded = True
             # healthy may use the 72h window: a 5% probe on a small workflow never reaches the minimum in 24h
             if name in ("slow", "long") and n >= s.did_healthy_min_dials and ratio - se_ratio >= s.did_degraded_ratio:

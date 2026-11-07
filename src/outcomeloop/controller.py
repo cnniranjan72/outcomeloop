@@ -435,25 +435,36 @@ class Controller:
 
     def did_target(self, opts: list[str], mem: dict, cur: dict) -> dict:
         """Equal split over healthy numbers; 0 for degraded; untested numbers get a small probe.
-        Insufficient evidence never moves traffic: a number whose health is still unknown keeps the share it
-        already has (it only loses share once it is *measured* as degraded). This matters for
-        next_campaign_only workflows, where a new allocation reaches traffic a campaign later."""
+        * Insufficient evidence never moves traffic between healthy and unknown numbers: an unknown number keeps
+          the share it already has (next_campaign_only workflows see a new allocation a campaign later).
+        * A measured-degraded number always gives up its share, even if the remaining numbers are only unknown:
+          an untested number is a better bet than one we have measured as flagged.
+        * Probing is budgeted: at most 10 % of traffic in total on untested numbers."""
         state = {d: mem.get(d, {}).get("state", "unknown") for d in opts}
         degraded = {d for d in opts if state[d] == "degraded"}
         healthy = [d for d in opts if state[d] == "healthy"]
+        unknown = [d for d in opts if d not in degraded and d not in healthy]
+        new_probes = [d for d in unknown if state[d] == "unknown" and cur.get(d, 0) <= self.s.did_probe_share]
+        probe_each = min(self.s.did_probe_share, 0.10 / len(new_probes)) if new_probes else 0.0
         tgt: dict[str, float] = {}
-        for d in opts:
-            if d in degraded or d in healthy:
-                continue
+        for d in unknown:
             if state[d] == "probe":
                 tgt[d] = self.s.did_reprobe_share           # a previously degraded number risks little traffic
+            elif d in new_probes:
+                tgt[d] = probe_each
             else:
-                tgt[d] = max(cur.get(d, 0.0), self.s.did_probe_share)   # unknown: keep what it has
+                tgt[d] = cur.get(d, 0.0)                     # unknown with real traffic: keep what it has
         if not healthy:
-            if not any(w > self.s.did_probe_share for w in tgt.values()):
-                return cur                                    # nothing measured yet and nothing to keep: no change
-            z = sum(tgt.values())
-            return {d: round(w / z, 4) for d, w in tgt.items() if w > 0}
+            if not any(cur.get(d, 0) > 0 for d in degraded) and not any(w > self.s.did_probe_share for w in tgt.values()):
+                return cur                                    # nothing measured, nothing degraded: no change
+            # freed traffic goes to numbers already carrying real traffic; only if none does, to the untested ones
+            carriers = [d for d in unknown if state[d] != "probe" and cur.get(d, 0) > self.s.did_probe_share]                 or [d for d in unknown if state[d] != "probe"] or unknown
+            if not carriers:
+                return cur                                    # every number is degraded: nothing better to move to
+            freed = 1 - sum(tgt.values())
+            for d in carriers:                               # degraded share goes to the non-degraded numbers
+                tgt[d] += freed / len(carriers)
+            return {d: round(w, 4) for d, w in tgt.items() if w > 0}
         rest = max(1 - sum(tgt.values()), 0.0)
         for d in healthy:
             tgt[d] = rest / len(healthy)
@@ -472,17 +483,29 @@ class Controller:
             p = probes[-1]
             thr = spec["governance"].get("min_validation_pass_rate", 0.97)
             run = None
-            if p["prompt"] == prompt:
-                def on_probe(r, inc_open=bool(open_inc)):
-                    # inside _validate's ledger transaction: the paid result, the probe's removal and the incident
+            if p["prompt"] == prompt and self.sim.state()["credits_remaining"] >= 10:
+                def on_probe(r, inc_open=bool(open_inc), prior=p.get("prior")):
+                    # inside _validate's ledger transaction: the paid result, the probe's state and the incident
                     # commit together. Clearing the probe BEFORE the call lost it on a crash mid-call (the
                     # supervisor's unsafe prompt then waited for the slower QA-flag detector).
+                    fails, n = r["failures"], r["n"]
+                    if prior:   # second run: decide on the pooled sample
+                        fails, n = fails + prior["failures"], n + prior["n"]
+                    pooled = 1 - fails / n
+                    se = (pooled * (1 - pooled) / n) ** 0.5
+                    if not prior and thr <= pooled < thr + se and self.sim.state()["credits_remaining"] >= 30:
+                        # within one standard error of the threshold: a coin flip, not a pass. Buy a second run
+                        # next tick and decide on the pooled evidence.
+                        db.kv_set(f"prompt_probe:{wf}", [{**p, "prior": r}])
+                        self.urgent.add(wf)
+                        return
                     db.kv_set(f"prompt_probe:{wf}", [])
-                    if r["pass_rate"] < thr and not inc_open:
+                    if pooled < thr and not inc_open:
                         self._open_incident(wf, prompt, now, {"trigger": "validation_probe", "validation": r,
-                                                              "threshold": thr})
-                run = self._validate(wf, spec, prompt, purpose=f"probe supervisor prompt change v{p['version']}",
-                                     persist=on_probe)
+                                                              "prior_validation": prior, "pooled_pass_rate":
+                                                              round(pooled, 4), "pooled_n": n, "threshold": thr})
+                run = self._validate(wf, spec, prompt, purpose=f"probe supervisor prompt change v{p['version']}"
+                                     + (" (second run, pooled)" if p.get("prior") else ""), persist=on_probe)
             if run is None:   # prompt moved on, no credits, or the call failed: drop the probe as before
                 with db.tx():
                     db.kv_set(f"prompt_probe:{wf}", [])
@@ -503,6 +526,12 @@ class Controller:
         iid, state, data = open_inc
         d = json.loads(data)
         if state == "open":
+            det = d.get("detector") or {}
+            strong = det.get("connected", 0) >= 400 and det.get("ref_rate", 0) > 0 and                 det.get("flag_rate", 0) >= 2.0 * det["ref_rate"] and det.get("z", 0) >= 5.0
+            if d.get("trigger") == "flag_rate" and strong and "confirmation" not in d:
+                d["confirmation"] = {"basis": "production QA flag rate >= 2x baseline with z >= 5 on >= 400 calls"}
+                with db.tx():
+                    db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
             if d.get("trigger") == "flag_rate" and "confirmation" not in d:
                 # second, independent evidence source before touching a customer-facing script: QA flags are a
                 # noisy detector, a validation run measures the prompt itself (3 credits)
@@ -604,10 +633,16 @@ class Controller:
         floor = 0 if incident else budget0 * self.s.credit_incident_reserve
         return st["credits_remaining"] - cost >= floor
 
+    def _validation_n(self) -> int:
+        """300 synthetic calls when credits are plentiful, fewer when scarce: a 100-call run (1 credit) still
+        separates a 1% from a 5% failure rate; running out mid-incident is the worse failure."""
+        left = self.sim.state()["credits_remaining"]
+        return self.s.validation_n if left >= 60 else (200 if left >= 20 else 100)
+
     def _validate(self, wf, spec, prompt, purpose, persist=None) -> dict | None:
         """persist(run), if given, runs inside the transaction that records the paid result, so a crash can never
         leave a paid-for validation committed in the ledger but unknown to the state that uses it."""
-        n = self.s.validation_n
+        n = self._validation_n()
         cost = math.ceil(n / 100)
         if not self._credits_ok(cost, incident=True):
             return None
@@ -881,7 +916,7 @@ class Controller:
             fix_cfg = copy.deepcopy(cfg)
             fix_cfg["prompt_version"] = desired["prompt_version"]
             if open_p is None or open_p[2] != "incident":
-                ok, why = self.gov.submit_window(spec, now)
+                ok, why = self.gov.submit_window(spec, now, emergency=True)
                 ok2, why2 = self.gov.can_request(wf, spec, now, emergency=True)
                 if ok and ok2:
                     self._submit(wf, spec, cur, fix_cfg, {"prompt_version": comps["prompt_version"]}, "incident",
@@ -903,10 +938,10 @@ class Controller:
 
         # 3) approval-route changes, batched into one request
         if approval_dims:
-            if open_p is not None:
-                return  # one open proposal per workflow: wait
-            ok, why = self.gov.submit_window(spec, now)
             emergency = did_urgent or ctx.get("urgent", False)
+            if open_p is not None and not (emergency and open_p[2] == "routine"):
+                return  # one open proposal per workflow: wait (an emergency may overtake a routine one)
+            ok, why = self.gov.submit_window(spec, now, emergency=emergency)
             ok2, why2 = self.gov.can_request(wf, spec, now, emergency=emergency)
             if ok and ok2:
                 self._submit(wf, spec, cur, desired, comps, "routine" if not emergency else "urgent",

@@ -348,3 +348,13 @@ def test_auto_apply_403_is_denied(gov, sim, db):
     sim.fail("auto_apply", ApiError(403, "auto_apply_not_permitted", ["dims not permitted"]))
     st, info = gov.auto_apply(WF, WID, "operational", b, 600)
     assert st == "AUTO_DENIED" and info["error"] == "auto_apply_not_permitted"
+
+
+def test_emergency_submit_window_uses_best_case_latency(gov):
+    # TTL 10h, latency 90-420 min: at 13:00 the worst case (20:00 -> next day 10:00) expires, the best case doesn't.
+    strict = spec(ttl=10, latency=(90, 420))
+    assert not gov.submit_window(strict, 13 * 60)[0]
+    ok, why = gov.submit_window(strict, 13 * 60, emergency=True)
+    assert ok, why
+    # an emergency still never goes to an absent approver
+    assert not gov.submit_window(strict, 20 * 60, emergency=True)[0]

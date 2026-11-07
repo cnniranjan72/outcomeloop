@@ -221,3 +221,25 @@ def test_why_supervisor_edit_and_nothing_on_record(db):
     assert "supervisor edit" in sup and "supervisor_edit" in sup
     none = views.why(db, WID, "D1 10:00")
     assert "No configuration change on record" in none
+
+
+def test_did_target_degraded_number_always_loses_traffic_even_without_healthy(ctl):
+    # the only measured number is flagged; the others are untested probes: move to them rather than keep 91%
+    t = ctl.did_target(["D1", "D2", "D3"], {"D1": {"state": "degraded"}}, {"D1": 0.91, "D2": 0.045, "D3": 0.045})
+    assert "D1" not in t and t["D2"] == pytest.approx(0.5) and t["D3"] == pytest.approx(0.5)
+
+
+def test_did_target_freed_share_prefers_numbers_with_real_traffic(ctl):
+    t = ctl.did_target(OPTS, {"D2": {"state": "degraded"}}, {"D1": 0.5, "D2": 0.5})
+    assert t["D1"] == pytest.approx(0.9) and t["D3"] == pytest.approx(0.05) and "D2" not in t
+
+
+def test_did_target_probe_budget_is_capped(ctl):
+    opts = ["D1", "D2", "D3", "D4", "D5"]
+    t = ctl.did_target(opts, {"D1": {"state": "healthy"}, "D2": {"state": "healthy"}}, {"D1": 0.5, "D2": 0.5})
+    assert sum(t[d] for d in ("D3", "D4", "D5")) == pytest.approx(0.10, abs=1e-3)
+
+
+def test_did_target_unknown_numbers_keep_their_share(ctl):
+    t = ctl.did_target(["D1", "D2", "D3"], {"D1": {"state": "healthy"}}, {"D1": 0.34, "D2": 0.33, "D3": 0.33})
+    assert t == {"D1": 0.34, "D2": 0.33, "D3": 0.33}

@@ -149,7 +149,10 @@ class ExperimentEngine:
                 appended = True
         if e.status == "promoting" and self._plan_live(e, cfg):
             e.status, e.promoted_minute = "promoted", minute
-            e.versions = [version]
+            # keep earlier versions: under next_campaign_only older campaigns still run the experiment allocation,
+            # and those calls are concurrent, randomised comparisons of the same arms
+            if version not in e.versions:
+                e.versions.append(version)
             return "promoted"
         if e.status == "concluding" and self._plan_live(e, cfg):
             e.status = "no_winner"
@@ -346,9 +349,16 @@ class ExperimentEngine:
     def decay_check(self, e: Experiment, now: int, cohorts: list[Cohort]) -> dict:
         """Winner vs holdout over the recent window, compared with the lift measured at promotion."""
         s = self.s
-        since = max(e.promoted_minute if e.promoted_minute is not None else now, now - s.decay_window_minutes)
-        counts = self.arm_counts(e, since=since, cohorts=cohorts, until=now)
-        out = {"window_start": since, "scopes": {}, "decayed": []}
+        # adaptive window: 24h, widened to 48h / 72h until the holdout has enough calls (a 15% holdout on a small
+        # workflow collects ~100 connected calls a day, too few for a 24h test)
+        for hours in (24, 48, 72):
+            since = max(now - hours * 60, e.promoted_minute if e.promoted_minute is not None else now)
+            counts = self.arm_counts(e, since=since, cohorts=cohorts, until=now)
+            if all(min(counts.get("ALL", {}).get(pr["incumbent"], (0, 0, 0))[1],
+                       counts.get("ALL", {}).get(pr["winner"], (0, 0, 0))[1]) >= s.decay_min_connected
+                   for pr in e.promo.values()):
+                break
+        out = {"window_start": since, "window_hours": hours, "scopes": {}, "decayed": []}
         for scope, pr in e.promo.items():
             cc = counts.get("ALL" if scope == "default" else scope, {})
             if scope == "default":

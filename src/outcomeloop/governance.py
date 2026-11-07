@@ -58,19 +58,20 @@ class Governance:
             return False, "cool-down after a rejection"
         return True, "ok"
 
-    def submit_window(self, spec: dict, now: int) -> tuple[bool, str]:
+    def submit_window(self, spec: dict, now: int, emergency: bool = False) -> tuple[bool, str]:
         """Only send when a human is there, after the tenant's preferred start, and when even the slowest
-        approver response lands before the request expires."""
+        approver response lands before the request expires. For an emergency the fastest response is enough:
+        an expired emergency request costs one request slot, waiting costs customers."""
         g = spec["governance"]
         lo, hi = g["approver_hours"]
         lo = max(lo, self.s.tenant_pref(spec["tenant_id"]).get("not_before_hour", lo))
         h = (now % 1440) / 60
         if not lo <= h < hi:
             return False, f"outside approver hours [{lo},{hi})"
-        worst = next_working(now + g["approver_latency_minutes"][1], g["approver_hours"])
+        worst = next_working(now + g["approver_latency_minutes"][1 if not emergency else 0], g["approver_hours"])
         ttl = g["proposal_ttl_hours"] * 60
         if worst > now + ttl - 30:
-            return False, f"worst-case decision {minute_to_label(worst)} would be after expiry"
+            return False, f"{'best' if emergency else 'worst'}-case decision {minute_to_label(worst)} would be after expiry"
         return True, "ok"
 
     # ------------------------------------------------------------------ submit / auto-apply

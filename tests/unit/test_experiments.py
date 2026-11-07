@@ -246,3 +246,14 @@ def test_design_excludes_blacklisted_options_and_sizes_sample(eng):
     assert Settings().min_arm_connected_for_look <= e.n_plan <= 4000
     assert e.achieved_mde > 0
     assert eng.design(WF, "voice", _cfg({"V1": 1.0}), ["V1", "V2"], {"V2": 10_000}, 0, 0.4, 2000) is None
+
+
+def test_decay_window_widens_for_thin_holdout(db, eng):
+    # small workflow: ~60 holdout calls/day. 24h is too thin; the check widens to 72h and still detects the collapse.
+    for d in range(3):
+        arm(db, "V1", 60, 30, start=NOW - (d + 1) * DAY, end=NOW - d * DAY, ver=3)    # holdout 0.50
+        arm(db, "V2", 340, 136, start=NOW - (d + 1) * DAY, end=NOW - d * DAY, ver=3)  # winner now 0.40
+    e = promoted(0.10, 0.02)
+    e.promoted_minute = NOW - 4 * DAY
+    dc = eng.decay_check(e, NOW, [])
+    assert dc["window_hours"] > 24 and dc["decayed"] == ["default"]
