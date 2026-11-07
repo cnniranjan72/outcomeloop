@@ -87,7 +87,7 @@ itself restarts the controller if it exits abnormally.
   lift in 2–4 days; at 5 % MDE it would need ~4× the data, beyond a 10-day scenario.
 * **Exploration vs exploitation.** Explore at a fixed 40 % until a pre-registered rule decides, then exploit
   (85 % winner, 15 % holdout). Hourly harm watch: any challenger significantly worse (z < −2.33 on ≥ 200
-  connected) is dropped and blacklisted for 7 days, so exploration cost is bounded early.
+  connected) is dropped and blacklisted for 14 days, so exploration cost is bounded early.
 
 ### Deciding a winner
 * **Test.** One-sided two-proportion z-test on engagement (engaged ÷ connected) of each challenger vs the
@@ -110,10 +110,14 @@ itself restarts the controller if it exits abnormally.
 
 ### Decay and rollback (C7)
 * After promotion, the previous incumbent keeps a **15 % holdout**, giving a concurrent control.
-* Hourly, over the last 24 h, we test the winner-vs-holdout lift against the **80 % lower confidence bound of
+* Hourly, over the last 24 h (widened to 48 h / 72 h until the holdout has ≥ 120 connected calls — a 15 % holdout
+  on a small workflow collects ~100 a day), we test the winner-vs-holdout lift against the **80 % lower confidence bound of
   the lift measured at promotion** (not its point estimate: the estimate taken at the moment a test first
   crosses a boundary is biased upward, the winner's curse; our first version rolled back a genuine winner for
-  exactly this reason). Rollback when `z < −2.33`, or when the recent lift is itself significantly negative.
+  exactly this reason). Rollback when `z < −2.33`, or when the recent lift is itself negative at `z < −2.33` (both
+  at the 1 % level because the check repeats hourly over overlapping windows; at 5 % our suite showed false
+  rollbacks of genuine winners). Under `next_campaign_only`, calls from older campaigns still running the experiment
+  allocation count: they are concurrent, randomised comparisons of the same arms.
 * Rollback = proposal back to the holdout option; the decayed option is blacklisted for 7 days.
 * How fast: on public_02 the decaying `W3` share went from 64 % on the day after onset to 0 % two days later
   {{DECAY_EVIDENCE}}. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
@@ -134,9 +138,11 @@ itself restarts the controller if it exits abnormally.
   without it the controller once ramped a merely tired number out and put 100 % of traffic on one number, which
   the crash-recovery comparison exposed. **Healthy** = the ratio's ~84 % lower bound ≥ 0.85 on ≥ 150 dials
   (24 h, or 72 h so a 5 % probe on a small workflow can complete). Evidence for a re-probed number only counts
-  from the start of its probe. **Target** = equal split over healthy numbers (lowest per-number volume), 5 % probe
-  for untested numbers, 0 for degraded; a number whose health is still unknown keeps the share it has
-  (insufficient evidence never moves traffic). A degraded number rests (24 h, doubling), then gets a time-boxed
+  from the start of its probe. **Target** = equal split over healthy numbers (lowest per-number volume), 0 for
+  degraded, untested numbers share a probe budget of at most 10 % (5 % each); a number whose health is still unknown
+  keeps the share it has (insufficient evidence never moves traffic between healthy and unknown), but a
+  measured-degraded number **always** gives up its share — to numbers already carrying traffic first, otherwise to
+  the untested ones (an untested number is a better bet than one measured as flagged). A degraded number rests (24 h, doubling), then gets a time-boxed
   2 % re-probe.
 * **Exploration of numbers** is the probe share; it is auto-applied where policy allows (operational dim).
 

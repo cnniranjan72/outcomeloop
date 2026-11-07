@@ -64,6 +64,8 @@ Other documents:
 26. [Tests](#tests)
 27. [Load test](#load-test)
 28. [Crash recovery test](#crash-recovery-test)
+    - [Robustness suite (out-of-sample evaluation)](#robustness-suite-out-of-sample-evaluation)
+    - [Docker](#docker)
 29. [Interpreting reports](#interpreting-reports)
 30. [Troubleshooting](#troubleshooting)
 31. [Future improvements](#future-improvements)
@@ -517,10 +519,11 @@ On every decision tick, each `promoted` experiment runs `decay_check` over the w
 A scope is decayed when the holdout and the winner each have at least 120 connected calls and either:
 
 - `z = (lift_now − LCB80(lift_at_promotion)) / sqrt(se_now² + se_promo²) < −2.33`, or
-- the current lift is negative with z < −1.645.
+- the current lift is negative with z < −2.33 (both clauses at 1 %: the check repeats hourly). The window is 24 h,
+  widened to 48 h / 72 h until both arms have ≥ 120 connected calls.
 
 A decay creates a `decay_detected` decision, plans the decayed scopes back to the incumbent at 100 %,
-blacklists the winner for 7 days, and makes the rollback request an emergency, so it can use the reserved
+blacklists the winner for 7 days (arms dropped as significantly worse: 14 days), and makes the rollback request an emergency, so it can use the reserved
 fatigue slot and skip the rejection cool-down on that tick. The experiment moves to `rolled_back` when the
 simulator's live config matches the rollback plan.
 
@@ -568,7 +571,9 @@ stateDiagram-v2
 - **Target allocation** (`did_target`):
   - Equal split over healthy numbers; 0 for degraded.
   - A number whose health is still unknown keeps the share it already has (insufficient evidence never moves
-    traffic); an untested number with no share gets a 5 % probe; a number on re-probe gets 2 %.
+    traffic between healthy and unknown); untested numbers share a probe budget of at most 10 % (5 % each); a number
+    on re-probe gets 2 %. A measured-degraded number always gives up its share, to numbers already carrying
+    traffic first, otherwise to the untested ones.
   - With no measured-healthy number and nothing beyond probe shares, the current allocation is kept.
   - A change is proposed only if the total-variation move is at least 0.05, or if a degraded number still carries
     traffic.
@@ -581,7 +586,8 @@ stateDiagram-v2
 
 1. **Validation probe on supervisor prompt edits.** A `config_changed` from a supervisor that touches
    `prompt_version` marks the workflow urgent and queues a probe. On the next tick we run
-   `POST /validation/runs` (n = 300, 3 credits). A pass rate below the policy's `min_validation_pass_rate` opens
+   `POST /validation/runs` (n = 300 while credits ≥ 60, 200 while ≥ 20, else 100; a result within one standard
+   error of the threshold buys a second run and the pooled sample decides). A pass rate below the policy's `min_validation_pass_rate` opens
    an incident (`trigger: validation_probe`).
 2. **Flag-rate detector.** This uses the QA flag rate on the live prompt since its last change (at most 24 h) vs
    the workflow's own history reference rate. It fires at ≥ 250 connected calls, rate > 1.5 × reference and
@@ -1153,6 +1159,43 @@ After each kill it restarts the controller. After the last restart it lets the r
 Result: `9 hard kills, 20 verification checks, 0 failed`. The evidence is in `reports/crash_recovery_timeline.json` (kill timeline and
 verification), `reports/crash_public_02_grade.md`, `reports/crash_recovery.md` when present, and
 `runs/crash_public_02_ctl.log`.
+
+## Robustness suite (out-of-sample evaluation)
+
+Tuning against two public scenarios is how a controller overfits. Hidden scenarios "differ in truth, incidents and
+policy", so we evaluate every change on **our own generated scenarios** with the same schema
+(`scripts/make_robustness_scenarios.py` → `tests/robustness/`), each targeting a failure mode:
+
+| scenario | what it changes | what it tests |
+|---|---|---|
+| `r1_shuffled_truth` | different winners/losers, caller ID flagged on renewal, supervisor ships the persuasive prompt | does learning generalise; borderline-unsafe prompt |
+| `r2_strict_policy` | no auto-apply anywhere, slow approvers, 10 h TTL, flagged number on an approval-only workflow | incident response through approvals only |
+| `r3_null_effects` | **no true variant effects at all** | false-winner rate: every applied variant change would be noise |
+| `r4_decay_heavy` | several winners that decay within ~2 days | decay detection and rollback speed |
+| `r5_low_credits` | 12 credits, two prompt incidents | credit discipline under incidents |
+| `r6_odd_shapes` | single-option dims, 5 caller IDs (2 bad before D0), unusual languages, `next_campaign_only` | shape robustness |
+
+```bash
+scripts/robustness.sh                      # one Linux container per scenario (falls back to native if no Docker)
+SEED_REPLICAS=2 EXTRA_SCENARIOS="scenarios/public_01_dev.yaml scenarios/public_02_incidents.yaml" scripts/robustness.sh
+```
+
+Results: `reports/robustness.md` (grader output per scenario, harmful changes, incident MTTR, decay shares). The suite
+found and drove fixes for: a flagged caller ID kept at 91 % on an approval-only workflow, decay never tested on a
+small `next_campaign_only` workflow, a second prompt incident left unfixed when credits ran low, false decay
+rollbacks from a too-loose repeated test, and 20-hour MTTR on a borderline-unsafe prompt.
+
+## Docker
+
+Not required (`run.sh` is native), but provided for a reproducible Linux run matching the grader's box:
+
+```bash
+docker build -t outcomeloop .
+docker run --rm --cpus 4 --memory 8g outcomeloop scripts/docker_scenario.sh public_01_dev
+```
+
+`scripts/docker_scenario.sh` runs baseline → simulator → `./run.sh` → grade inside the container. Verified on
+`python:3.12-slim` with 4 vCPU / 8 GB: public_01 and public_02 complete with `run.sh` exit 0.
 
 ## Interpreting reports
 

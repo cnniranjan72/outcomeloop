@@ -92,8 +92,11 @@ def supervisor(db: DB, workflow_id: str) -> str:
                 " LIMIT 1", (wf,))
     if cfg:
         c = json.loads(cfg[2])
-        out.append(f"Live config v{cfg[0]} (by {cfg[1]}): prompt {c['prompt_version']}, default "
-                   + ", ".join(f"{d}={c['allocations']['default'][d]}" for d in ("welcome_message", "voice", "caller_id")))
+        fmt = lambda dist: " ".join(f"{o} {w:.0%}" for o, w in sorted(dist.items(), key=lambda kv: -kv[1]))
+        out.append(f"Live config v{cfg[0]} (by {cfg[1]}): prompt {c['prompt_version']}")
+        for d in ("welcome_message", "voice", "caller_id"):
+            out.append(f"  {d:16s} {fmt(c['allocations']['default'][d])}"
+                       + "".join(f" | {k}: {fmt(v[d])}" for k, v in c["allocations"].items() if k != "default" and d in v))
     k = db.q1("SELECT COUNT(*), SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=?", (wf, now - 1440))
     if k[0]:
         out.append(f"Last 24h: {k[0]} dials · pickup {k[1] / k[0]:.1%} · engagement {k[2] / max(k[1], 1):.1%}"
@@ -188,3 +191,107 @@ def customer(db: DB, person_id: str, day: int | None) -> str:
                    + (f" set by {v[0]} (proposal {v[1]}, approval {v[2]})" if v else " (business default)"))
     out.append("Run `why <workflow> --at <time>` on any config version above for the reasoning and approver.")
     return "\n".join(out)
+
+
+# ------------------------------------------------------------------------------------------ paging rules (C14)
+def alerts(db: DB) -> tuple[str, list[dict]]:
+    """Evaluate the paging rules from SUBMISSION.md §10 against the store. Returns (text, firing alerts).
+    Only conditions that need a human now page; everything else belongs in the supervisor view."""
+    now = db.q1("SELECT MAX(until_minute) FROM chunks")[0] or 0
+    last_wall = db.q1("SELECT MAX(wall) FROM metrics")[0] or 0
+    fire: list[dict] = []
+
+    def page(rule, msg, look):
+        fire.append({"rule": rule, "message": msg, "look_at": look})
+
+    # 1. the loop is blind: no new chunk for more than 2 ticks while the simulator clock moved
+    lag = db.q1("SELECT value FROM metrics WHERE name='ingest_lag_minutes' ORDER BY id DESC LIMIT 1")
+    hour = (now % 1440) // 60
+    if lag and lag[0] > 30 and 9 <= hour < 21:   # at night no calls are made, so no chunks is normal
+        page("ingest_stalled", f"no events ingested for {lag[0]:.0f} sim-minutes during dialling hours",
+             "python -m outcomeloop status; controller log; GET /events/chunks")
+    # 2. crash loop / error storm
+    errs = db.q1("SELECT COUNT(*) FROM decisions WHERE kind='error' AND minute > ?", (now - 60,))[0]
+    if errs > 5:
+        page("error_rate", f"{errs} isolated decision errors in the last sim-hour",
+             "python -m outcomeloop audit --kind error")
+    restarts = db.q1("SELECT COUNT(*) FROM decisions WHERE kind='controller_restart' AND wall > ?",
+                     (last_wall - 3600,))[0]
+    if restarts > 3:
+        page("crash_loop", f"{restarts} controller restarts in the last wall-clock hour",
+             "controller log around each restart; python -m outcomeloop audit --kind controller_restart")
+    # 3. credits near the incident reserve
+    start = db.kv_get("credits_start")
+    cr = db.q1("SELECT value FROM metrics WHERE name='credits_remaining' ORDER BY id DESC LIMIT 1")
+    if start and cr and cr[0] <= start * 0.40 * 1.10:
+        page("credits_low", f"{cr[0]:.0f} credits left of {start:.0f}; incident reserve is {start * 0.4:.0f}",
+             "python -m outcomeloop audit --kind validation_run")
+    # 4. approved but not applied for > 60 min (apply window is 2 h)
+    for pid, wf, upd in db.q("SELECT proposal_id, wf, updated_minute FROM proposals WHERE state='APPROVED'"):
+        if now - upd > 60:
+            page("approval_not_applied", f"{pid} approved {now - upd} sim-minutes ago and not applied",
+                 f"python -m outcomeloop audit --wf <wf {wf}>; GET /approvals/<id>")
+    # 5. incident open > 4 h without a fix proposal
+    for iid, wf, opened, state in db.q("SELECT incident_id, wf, opened_minute, state FROM incidents"
+                                        " WHERE state IN ('open','fix_ready')"):
+        if now - opened > 240:
+            page("incident_stuck", f"{iid} open for {now - opened} sim-minutes in state {state}",
+                 f"python -m outcomeloop audit --kind incident_no_fix; credits; approver hours")
+    out = [f"# paging rules at {minute_to_label(now)}: {len(fire)} firing"]
+    out += [f"PAGE {a['rule']}: {a['message']}  → look at: {a['look_at']}" for a in fire] or ["all clear"]
+    return "\n".join(out), fire
+
+
+# ------------------------------------------------------------------------------------------ read-only HTTP (C11)
+def serve(db_path: str, port: int):
+    """Tiny read-only HTTP front for the same views: /status, /alerts, /supervisor/<wf>, /why/<wf>?at=D3%2014:00,
+    /customer/<person_id>. Standard library only; opens the store read-only per request."""
+    import sqlite3
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            u = urlparse(self.path)
+            parts = [unquote(p) for p in u.path.strip("/").split("/") if p]
+            q = parse_qs(u.query)
+            db = DB.__new__(DB)
+            db.conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            db._codes, db._rev, db._in_tx = {}, {}, False
+            for kind, value, code in db.conn.execute("SELECT kind, value, code FROM codes"):
+                db._codes[(kind, value)] = code
+                db._rev[(kind, code)] = value
+            try:
+                if parts == ["status"]:
+                    body = status(db)
+                elif parts == ["alerts"]:
+                    body = alerts(db)[0]
+                elif len(parts) == 2 and parts[0] == "supervisor":
+                    body = supervisor(db, parts[1])
+                elif len(parts) == 2 and parts[0] == "why":
+                    body = why(db, parts[1], q.get("at", ["D0 00:00"])[0])
+                elif len(parts) == 2 and parts[0] == "customer":
+                    body = customer(db, parts[1], int(q["day"][0]) if "day" in q else None)
+                else:
+                    body, code = "routes: /status /alerts /supervisor/<wf> /why/<wf>?at=D3%2014:00 /customer/<person>", 404
+                    self._send(code, body)
+                    return
+                self._send(200, body)
+            except SystemExit as e:
+                self._send(404, str(e))
+            finally:
+                db.conn.close()
+
+        def _send(self, code, body):
+            b = body.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def log_message(self, *a):
+            pass
+
+    print(f"OutcomeLoop views (read-only) on http://127.0.0.1:{port}/status")
+    ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()

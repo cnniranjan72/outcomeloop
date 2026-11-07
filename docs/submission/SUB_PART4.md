@@ -100,6 +100,17 @@ listed in §14.
 
 {{P02_CHANGES}}
 
+### Out of sample: the robustness suite (`reports/robustness.md`)
+
+Two public scenarios are too few to trust, and a controller tuned to them is the failure the brief warns about.
+We generated six scenarios of our own with the same schema and different truth, policies and incidents
+(`scripts/make_robustness_scenarios.py`; README "Robustness suite"), and run each — plus both public scenarios —
+at two random seeds. The table is the simulator grader's output:
+
+{{ROBUST_TABLE}}
+
+{{ROBUST_NOTES}}
+
 ### Interpretation
 
 * **Where we helped.** Conclusion rate up on every workflow in both scenarios. The biggest contributors, from

@@ -35,7 +35,9 @@ the next plan starts from fresh data and the new base (Product: expired = reject
   Everything we want for a workflow is batched into one changeset: cohorts + schedule + caller IDs + experiment
   starts went out as a single request on D0.
 * **When we send.** Only inside approver hours, after the tenant's preferred start (Kestrel: 11:00), and only
-  if the *worst-case* decision time `next_working(now + latency_max)` falls before expiry. On `nw_kyc`
+  if the *worst-case* decision time `next_working(now + latency_max)` falls before expiry (for an emergency — a
+  flagged caller ID or an unsafe prompt — the *best-case* time is enough: an expired emergency request costs one
+  slot, waiting costs customers; an emergency may also overtake a pending routine proposal). On `nw_kyc`
   (latency up to 8 h, hours 10–18) that means early in the day.
 * **Fatigue.** Trailing-24h count of every request (rejected and expired count too) < `min(policy, tenant
   preference)`, with **one slot reserved for incidents**. Effect: ≤ 1 routine request/day on `ks_cancel` and
@@ -83,13 +85,17 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
   population-level evidence, available before enough real calls accrue.
 * **False positives.** The flag detector is noisy. Our first version opened an incident on the production
   prompt from a QA-flag tail event and swapped in a "strict" script that cut engagement 14 %. Now an
-  incident from flags alone needs **a second, independent signal**: a validation run of the live prompt must
+  incident from flags alone needs **a second, independent signal** unless the production signal is overwhelming
+  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): a validation run of the live prompt must
   fail the policy threshold. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
   validation) ≈ 10⁻³ *(derived from the binomial at n=300)*, so a false prompt change is ~10⁻⁶ per look.
 * **Choosing a fix (LLM proposes, never decides).** Candidates in order: (1) prompts with ≥ 1,000 connected
   calls in our own history and a normal flag rate, ordered by observed engagement (validation says nothing about
   engagement); (2) only if none validates, `/llm/suggest-fixes` (3 credits). Each candidate is validated
-  (n = 300); the first that passes `min_validation_pass_rate` (read from the policy) wins. Deterministic.
+  (n = 300 while credits ≥ 60, 200 while ≥ 20, else 100 — a 100-call run still separates a 1 % from a 5 % failure
+  rate, and running out mid-incident is the worse failure); the first that passes `min_validation_pass_rate` (read
+  from the policy) wins. Deterministic. A probe result within one standard error of the threshold is treated as a
+  coin flip: a second run is bought next tick and the decision uses the pooled sample.
 * **Verification after apply.** After 4 h: flag rate back under the detector threshold **and** engagement on
   the new prompt not > 5 % below the pre-incident week (z < −2). A safe-but-disengaging fix (Kestrel memo:
   "nobody hallucinated, nobody stayed") is marked harmful and the next candidate is tried.

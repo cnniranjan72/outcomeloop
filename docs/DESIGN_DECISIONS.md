@@ -77,7 +77,7 @@ thresholds for the number of looks per day.
 | Caller-ID healthy | same | 24h or 72h (since probe start for re-probes) | 150 dials | ratio − se ≥ 0.85 and not degraded |
 | Hallucination spike | flag rate on current prompt vs workflow's history baseline | rolling 4h / since prompt change | 250 connected | rate > 1.5× baseline **and** z > 3.5 |
 | KPI drift | workflow pickup / engagement, last 24h vs trailing 7d | daily | 1000 dials / 500 connected | relative drop > 5 % and z > 3 (alert only) |
-| Decay | winner-vs-holdout lift, recent 24h vs lift at promotion | hourly | 150 connected per arm | z < −2.33 or recent lift < 0 with z < −1.645 |
+| Decay | winner-vs-holdout lift, recent 24h vs lift at promotion | hourly | 150 connected per arm | z < −2.33 vs promotion LCB80, or recent lift < 0 with z < −2.33; window 24→72h until ≥ 120 connected |
 
 z = 3.5 one-sided ≈ 2.3e-4 per look; with ~48 looks/day/detector that's ≈1 % false alarms per workflow-day.
 
@@ -113,7 +113,7 @@ z = 3.5 one-sided ≈ 2.3e-4 per look; with ~48 looks/day/detector that's ≈1 %
 
 ## 6. Caller-ID (C5)
 
-Target allocation = equal split over DIDs classified **healthy**, 0 for **degraded**, a 5 % probe for untested
+Target allocation = equal split over DIDs classified **healthy**, 0 for **degraded**, a 5 % probe (10 % total budget) for untested
 DIDs, 2 % for a degraded DID being re-probed after its rest (24 h, doubling). A DID whose health is still
 **unknown keeps the share it has**: insufficient evidence never moves traffic (this matters on
 `next_campaign_only` workflows, where an allocation reaches traffic a campaign later). Equal split minimises
@@ -135,7 +135,7 @@ penalty outside the preferred hour makes errors expensive).
 2. Candidates: last known-good prompt from our own history (lowest observed flag rate with ≥ 1000 connected
    calls) first; LLM `suggest-fixes` only if no known-good candidate passes validation (CTO: no compute that
    doesn't change a decision).
-3. Validate each candidate (`n = 300`, 3 credits). Deterministic choice: passes policy threshold, then prefers
+3. Validate each candidate (`n = 300`, fewer when credits are scarce). Deterministic choice: passes policy threshold, then prefers
    observed engagement evidence, then higher pass rate.
 4. Propose through `/approvals` with `evidence.validation_run_id` (prompt changes are never auto-applicable).
    A supervisor's edit is reverted **only** through an approval that says so in the summary.

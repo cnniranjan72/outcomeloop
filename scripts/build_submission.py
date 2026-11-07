@@ -131,6 +131,10 @@ def main():
     tests = subprocess.run([PY, "-m", "pytest", "-q"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8").stdout
     tests_line = [l for l in tests.strip().splitlines() if "passed" in l][-1].strip()
 
+    rb = (R / "robustness.md").read_text(encoding="utf-8") if (R / "robustness.md").exists() else ""
+    robust_table = chr(10).join(l for l in rb.splitlines() if l.startswith("|")) or "(not run)"
+    robust_notes = (D / "ROBUST_NOTES.md").read_text(encoding="utf-8").strip() if (D / "ROBUST_NOTES.md").exists() else ""
+
     # ---------------------------------------------------------------- stakeholder / assumption corrections
     sh = sh.replace(" We also apply a relative reading (drop > margin × 10 = 20 %) and enforce\n   whichever is stricter.", "")
     sh = re.sub(r"We check welcome × voice interaction before promoting a\s+combination rather than assuming there is none\.",
@@ -194,6 +198,7 @@ def main():
         "{{HARM_SUMMARY}}": f"{len(h1)} on public_01, {len(h2)} on public_02",
         "{{DECAY_EVIDENCE}}": f"(grader: share by day after onset {json.dumps(dec2)})",
         "{{TESTS}}": tests_line,
+        "{{ROBUST_TABLE}}": robust_table, "{{ROBUST_NOTES}}": robust_notes,
         "{{DATE}}": "2026-11-07", "{{NAME}}": "[YOUR NAME]", "{{HOURS}}": "[FILL IN]",
     }
     for k, v in fills.items():

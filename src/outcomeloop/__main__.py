@@ -4,6 +4,8 @@
   python -m outcomeloop why nw_renewal --at "D3 14:00"           # why did X change at T, who approved, what next
   python -m outcomeloop supervisor ks_cancel                     # one screen for a client supervisor
   python -m outcomeloop status                                   # loop health for on-call
+  python -m outcomeloop alerts                                   # paging rules; exit 1 if one fires
+  python -m outcomeloop serve-views --port 8800                  # read-only HTTP: /status /alerts /supervisor/<wf>
   python -m outcomeloop audit --wf nw_renewal --kind proposal_submitted
   python -m outcomeloop customer nw_renewal:p0004567 --day 3     # what did this person hear, and why
 All read commands only read the SQLite store (OUTCOMELOOP_DB, default state/outcomeloop.db).
@@ -31,6 +33,9 @@ def main(argv=None):
     sv = sub.add_parser("supervisor")
     sv.add_argument("workflow")
     sub.add_parser("status")
+    sub.add_parser("alerts", help="evaluate paging rules; exit 1 if any fires")
+    sv2 = sub.add_parser("serve-views", help="read-only HTTP front for the views")
+    sv2.add_argument("--port", type=int, default=8800)
     au = sub.add_parser("audit")
     au.add_argument("--wf")
     au.add_argument("--kind")
@@ -58,6 +63,13 @@ def main(argv=None):
         print(views.supervisor(db, a.workflow))
     elif a.cmd == "status":
         print(views.status(db))
+    elif a.cmd == "alerts":
+        text, firing = views.alerts(db)
+        print(text)
+        raise SystemExit(1 if firing else 0)
+    elif a.cmd == "serve-views":
+        db.close()
+        views.serve(a.db, a.port)
     elif a.cmd == "audit":
         print(views.audit(db, a.wf, a.kind, a.limit))
     elif a.cmd == "customer":
