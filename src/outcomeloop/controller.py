@@ -441,6 +441,7 @@ class Controller:
             self.check_cohort_agreement(wf, cfg, now)
         self.step_experiments(wf, spec, cfg, now, ctx)
         self.step_persontime(wf, spec, now, ctx)
+        self.verify_applied(wf, spec, now)
 
         desired = self.desired_config(wf, spec, cfg, dids, ctx)
         self.route(wf, spec, cur, desired, ctx)
@@ -471,6 +472,59 @@ class Controller:
                 db.decide(now, wf, "alert", f"cohort definitions diverged: {bad}/{total} calls assigned differently"
                           f" by us and by the simulator", evidence=out)
         return out
+
+    # ---- post-apply verification: "what happened afterwards", for every applied change
+    def verify_applied(self, wf, spec, now):
+        """24 h after any applied change (approval or auto route), compare the workflow's pickup and engagement in
+        the 24 h before vs after and evaluate the guardrail KPI against the policy margin. Recorded as a
+        `post_apply_verification` decision linked to the proposal and version; a significant guardrail breach is
+        an alert. Before/after is confounded by time (campaign mix, other changes), so it is a check, not an
+        estimate of the change's effect — randomised comparisons (experiments, holdouts) carry that."""
+        from .stats import Prop, compare
+        db = self.db
+        rows = db.q("SELECT p.proposal_id, p.applied_version, v.minute, v.changed_dims FROM proposals p JOIN"
+                    " config_versions v ON v.wf=p.wf AND v.version=p.applied_version WHERE p.wf=? AND p.state='APPLIED'"
+                    " AND v.minute IS NOT NULL AND v.minute <= ? AND v.minute > ?", (wf, now - 1440, now - 3 * 1440))
+        if not rows:
+            return
+        obj = spec["objective"]
+        primary = obj.get("primary", "engagement_rate")
+        g = obj.get("guardrail") or {}
+        gname, margin = (next(iter(g.items())) if g else ("pickup_rate_max_drop", 0.02))
+        gkpi = gname.replace("_max_drop", "")
+        for pid, ver, applied, dims in rows:
+            if db.q1("SELECT 1 FROM decisions WHERE kind='post_apply_verification' AND proposal_id=?", (pid,)):
+                continue
+            q = lambda a, b: db.q1("SELECT COUNT(*), SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND"
+                                   " minute<?", (wf, a, b))
+            bn, bc, be = q(applied - 1440, applied)
+            an, ac, ae = q(applied, applied + 1440)
+            bc, be, ac, ae = bc or 0, be or 0, ac or 0, ae or 0
+            out = {"window_before": [applied - 1440, applied], "window_after": [applied, applied + 1440],
+                   "changed_dims": json.loads(dims or "[]"), "primary": primary, "guardrail": gkpi, "margin": margin}
+            if bn and an and bc and ac:
+                pk = compare(Prop(bc, bn), Prop(ac, an))
+                en = compare(Prop(be, bc), Prop(ae, ac))
+                out.update({"pickup": {"before": round(bc / bn, 4), "after": round(ac / an, 4), "z": round(pk.z, 2)},
+                            "engagement": {"before": round(be / bc, 4), "after": round(ae / ac, 4), "z": round(en.z, 2)}})
+                gc = pk if gkpi == "pickup_rate" else en
+                breach = -gc.diff > margin and gc.z < -2.33
+                out["guardrail_breach"] = breach
+            else:
+                breach = False
+                out["note"] = "not enough calls on one side of the change"
+            with db.tx():
+                db.decide(now, wf, "post_apply_verification", f"{pid} (v{ver}): "
+                          + (f"pickup {out['pickup']['before']:.3f}→{out['pickup']['after']:.3f}, engagement "
+                             f"{out['engagement']['before']:.3f}→{out['engagement']['after']:.3f}"
+                             + (f"; GUARDRAIL BREACH on {gkpi}" if breach else "; guardrail ok")
+                             if "pickup" in out else out["note"]),
+                          evidence=out, proposal_id=pid, config_version=ver,
+                          reasoning="before/after on the whole workflow (24 h each side); confounded by time, so a"
+                                    " check rather than an effect estimate")
+                if breach:
+                    db.decide(now, wf, "alert", f"guardrail {gkpi} fell beyond the policy margin after {pid}",
+                              evidence=out, proposal_id=pid)
 
     # ---- per-person call time (C4), as a randomised experiment
     def step_persontime(self, wf, spec, now, ctx):

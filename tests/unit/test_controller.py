@@ -290,3 +290,25 @@ def test_pending_cohort_level_promotion_does_not_crash_decisions(ctl, db):
         e.save(db, 0)
     ctl.step_experiments(ctl.wf, ctl.specs[ctl.wf], CFG, 12 * 60, ctx())   # must not raise
     assert Experiment.load_active(db, ctl.wf)["voice"].status == "promoting"
+
+
+def test_post_apply_verification_flags_a_guardrail_breach(ctl, db):
+    # an applied change after which the guardrail KPI (pickup, for an engagement-primary workflow) collapses
+    from helpers import add_calls
+    from outcomeloop.db import dumps as _d
+    t = 2 * 1440
+    with db.tx():
+        db.x("INSERT INTO config_versions (wf, version, actor, minute, changed_dims) VALUES (?,?,?,?,?)",
+             (ctl.wf, 5, "controller_auto", t, _d(["schedule"])))
+        db.x("INSERT INTO proposals (proposal_id, wf, route, state, kind, base_version, body, applied_version,"
+             " created_minute, updated_minute) VALUES ('ol-x', ?, 'auto', 'APPLIED', 'operational', 4, '{}', 5, ?, ?)",
+             (ctl.wf, t, t))
+    add_calls(db, ctl.wf, 4000, 1200, 600, minute=t - 1440, spread=1440)     # before: pickup 0.30
+    add_calls(db, ctl.wf, 4000, 800, 400, minute=t, spread=1440)             # after:  pickup 0.20
+    spec = dict(ctl.specs[ctl.wf], objective={"primary": "engagement_rate", "guardrail": {"pickup_rate_max_drop": 0.02}})
+    ctl.verify_applied(ctl.wf, spec, t + 1440)
+    v = db.q("SELECT summary FROM decisions WHERE kind='post_apply_verification'")
+    assert len(v) == 1 and "GUARDRAIL BREACH" in v[0][0]
+    assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='alert'")[0] == 1
+    ctl.verify_applied(ctl.wf, spec, t + 1500)                                 # verified once, not again
+    assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='post_apply_verification'")[0] == 1
