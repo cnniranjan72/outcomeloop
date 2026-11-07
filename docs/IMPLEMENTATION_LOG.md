@@ -73,7 +73,7 @@ borderline-unsafe prompt; a promotion applied after its effect faded; a false wi
 Null-effect scenario: 0 harmful changes at both seeds.
 
 **Also:** paging rules as code (`outcomeloop alerts`), read-only HTTP views (`serve-views`), supervisor view in
-percentages, `run.sh` path portability (native path via `pwd -W`), review guide (`docs/REVIEW_GUIDE.md`).
+percentages, `run.sh` path portability (native path via `pwd -W`).
 
 **Trade accepted:** ~2–3 points less public_01 lift than the public-only-tuned version, in exchange for the
 failure modes above.
