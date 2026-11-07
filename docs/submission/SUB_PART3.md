@@ -122,7 +122,7 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
 | Thompson sampling / bandit allocation | Less regret during exploration | Every allocation change costs an approval (1–2/day); a bandit needs frequent re-allocation. Fixed 60/40 + early harm drop + sequential test fits the governance budget and gives a clean false-winner guarantee. |
 | Bayesian "probability to beat" winner rule | Intuitive for supervisors | Needs a prior and a decision threshold whose false-winner rate under optional stopping is not controlled by default. OBF spending + Holm gives a defensible α. We show lifts and z in the supervisor view instead. |
 | Fixed-horizon test only | Simplest valid test | Wastes days when a winner is obvious; sequential looks with α spending stop early without inflating error. |
-| Per-person call time | Product's summit headline | Thin per-person evidence + 0.25× penalty outside the preferred hour; cohort-level weights capture the archetype signal from history. Cut. |
+| Per-person call time applied to everyone | Product's summit headline | A wrong guess costs 0.25× weight; instead it runs as a randomised, self-terminating experiment and is kept only on evidence. Cohort-level weights capture the archetype signal from history. Cut. |
 | Postgres + Redis in the assignment | SRE already runs them | Embedded SQLite = zero infrastructure on the grader box; schema is plain SQL, ports to Postgres. Redis adds nothing a durable checkpoint doesn't. |
 | Keep raw events only in memory, aggregates in DB | Faster | Compliance's "why did this customer hear this" needs per-call rows; recovery is simpler when the rows are the checkpointed truth. |
 | Auto-apply customer-facing changes where policy allows | Faster learning on Kestrel | Kestrel's supervisor asked to be told first; we route them through approval and accept the speed cost. |
@@ -132,9 +132,9 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
 
 ## 13. Known weaknesses
 
-1. **Interaction between welcome and voice is assumed away.** Marginal analysis is valid for each dimension's
-   average effect; a strong interaction could make the promoted combination worse than either marginal implies.
-   A 2-way cell check before promotion is the fix (data is already in the calls table).
+1. **Interaction is checked only where it matters most.** Before promotion the winner's lift is re-estimated
+   within the other dimension's dominant option and blocked if it does not win there; a full welcome × voice
+   interaction model (all cells) is not fitted — with these volumes most cells would be too thin to test.
 2. **Effects that exist only in a subgroup not aligned with the cohort set** (e.g. `lang = ta` when cohorts
    are by age) are only found if large enough to show pooled. A slice-based heterogeneity search that proposes a
    refined cohort set is designed (§5) but not built.

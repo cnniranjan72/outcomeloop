@@ -235,8 +235,18 @@ class Governance:
                     with self.db.tx():
                         n = self.db.x("UPDATE proposals SET state=?, approval_id=?, approval=?, updated_minute=? WHERE"
                                       " proposal_id=?", (st, ap["approval_id"], dumps(ap), now, ap["proposal_id"])).rowcount
+                    if not n:
+                        # no local row at all (state rebuilt after corruption): we no longer hold the context that
+                        # justified it, so never apply it — record it WITHDRAWN so it still counts toward fatigue
+                        with self.db.tx():
+                            self.db.x("INSERT OR IGNORE INTO proposals (proposal_id, wf, route, state, kind, base_version,"
+                                      " body, approval_id, approval, created_minute, updated_minute, notes) VALUES"
+                                      " (?,?,?,?,?,?,?,?,?,?,?,?)",
+                                      (ap["proposal_id"], wf, "approval", "WITHDRAWN", "adopted", ap["base_version"],
+                                       "{}", ap["approval_id"], dumps(ap), ts_to_minute(ap["created_at"]) if ap.get("created_at") else now, now,
+                                       "orphan adopted after state loss"))
                     notes.append(f"orphan approval {ap['approval_id']} for {ap['proposal_id']}: "
-                                 + (f"adopted as {st}" if n else "no local row"))
+                                 + (f"adopted as {st}" if n else "adopted as WITHDRAWN (no local context)"))
         return notes
 
     def reconcile_submitting(self, wf: int, wid: str, now: int):

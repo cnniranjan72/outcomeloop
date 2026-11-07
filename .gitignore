@@ -16,3 +16,4 @@ tests/robustness/*_s[0-9]*.yaml
 INTERVIEW_PREPARATION.md
 docs/REVIEW_GUIDE.md
 tests/scale/
+reports/public_03_load.md

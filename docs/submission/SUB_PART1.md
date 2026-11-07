@@ -21,7 +21,7 @@
 - Kill -9 at any point and it resumes ({{CRASH_SUMMARY}}); public_03 load: {{LOAD_SUMMARY}}.
 - Out of sample: six scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
   × 2 seeds plus both public scenarios — {{ROBUST_HEADLINE}}.
-- Deliberately not built: per-person call time, LLM-driven anything beyond fix suggestions, fair-share across
+- Deliberately not built: LLM-driven anything beyond fix suggestions, fair-share across
   tenants (C15), a UI (the supervisor view is a CLI over the same store).
 
 ## 1. Assumptions
@@ -35,7 +35,7 @@
 | C1 | Event ingestion at load scale | **Built** | Everything else is only as good as ingestion; exactly-once is the basis of crash safety. One transaction per chunk (rows + checkpoint), `INSERT OR IGNORE` on the event key. | Rollup tables at ingest so decisions don't scan raw rows at 10×. |
 | C2 | Lead/feature joins, one shared cohort object | **Built** | Product's hard requirement; features are joined onto every call row at ingest, cohort membership has one SQL implementation used by detection, experiments and the supervisor view, and it is mirrored 1:1 into `config.cohorts`. | Slice-based refinement of the cohort set (e.g. add `lang=ta`) via proposal. |
 | C3 | Bootstrapping from history | **Built** | History is the only evidence on D0: hour-of-day profiles, per-number pickup, QA flag baseline, cohort choice (likelihood-ratio test). | — |
-| C4 | Call-time optimisation | **Partial** (per cohort) | Cohort-level hour weights from smoothed history, dry-run estimated; per-person cut (thin evidence, 0.25× penalty for wrong guesses). | Per-person preferred hour for people with ≥ 3 connects in a consistent band; A/B the schedule itself. |
+| C4 | Call-time optimisation | **Built** (cohort weights; per-person as a randomised experiment) | Cohort-level hour weights from smoothed history, dry-run estimated. Per-person preferred hours run as a self-terminating randomised experiment (treatment vs control people, pickup per dial), only where `schedule` is auto-appliable; it is kept only on evidence. | Extend per-person evidence to people returning from older campaigns. |
 | C5 | Caller-ID health | **Built** | Clearest outcome lever on pickup and a named incident type; randomisation makes it measurable. Fast/slow windows, equal split over healthy numbers, rest + re-probe, ramped auto-apply. | Load-aware model (pickup vs per-number volume) for planned rotation. |
 | C6 | Variant experimentation | **Built** | The core of "earning autonomy": factorial design, planned n, O'Brien-Fleming α spending, Holm, guardrail, cohort harm check. | Interaction check before promoting a combination. |
 | C7 | Winner promotion, decay, rollback | **Built** | Holdout-based decay test against the promotion's lower confidence bound; rollback via approval; blacklist. | Faster decay detection with a CUSUM on the holdout lift. |

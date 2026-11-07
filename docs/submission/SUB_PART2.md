@@ -138,9 +138,14 @@ itself restarts the controller if it exits abnormally.
   200 pseudo-dials, clipped to [0.25, 4]. Never 0: a 0 strands capacity when every eligible lead has weight 0.
   Dry run: historical re-weighting at fixed per-hour dial volume (+1.5–1.8 % pickup on public_01, stated as an
   upper bound because it ignores lead-pool depletion).
-* **Per-cohort, not per-person.** Per-person `lead_preferred_hour` is cut: a returning person has a handful of
-  past dials at ~30 % pickup, and the simulator multiplies weight by 0.25 outside the preferred hour, so a wrong
-  guess actively hurts that lead.
+* **Per-person, tested rather than assumed** (`persontime.py`). A person who picked up at hour h may pick up at h
+  again, but `lead_preferred_hour` multiplies weight by 0.25 outside the preferred hour, so a wrong guess hurts. We
+  therefore run it as a randomised experiment: candidates are people with an active lead who connected during the
+  current cadence (preferred hour = hour of their connects); a sha256 hash of `person_id` puts each in treatment
+  (preference) or control (none); a daily look compares pickup per dial after each person became a candidate
+  (z > 2.33 → expand to 90/10, z < −2.33 → stop and remove, no evidence by day 5 → stop). It only runs where
+  `schedule` is auto-appliable by policy (the daily map refresh would otherwise spend the approval budget), and a
+  stop removes only the entries we wrote. Measured result: {{PTIME_RESULT}}
 * **Caller ID.** Per-dial randomisation means a number's pickup vs the pooled other numbers in the same window
   isolates the number. **Degraded** = ratio < 0.85 and z < −3.5 on ≥ 300 dials in a 6 h or 24 h window **and**,
   for a number with a week of its own history, a drop of > 15 % against that history (z < −3). The second

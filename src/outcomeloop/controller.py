@@ -21,6 +21,7 @@ from .config import Settings
 from .db import DB, dumps
 from .detectors import did_health, did_own_past, halluc_baseline, halluc_spike, kpi_drift
 from .experiments import EXP_DIMS, Experiment, ExperimentEngine
+from .instancelock import InstanceLock
 from .persontime import PersonTime
 from .governance import Governance
 from .ingest import Ingestor
@@ -103,6 +104,7 @@ class Controller:
     def __init__(self, s: Settings):
         self.s = s
         self.sim = SimClient(s.sim_url, s.http_timeout_s, s.http_retries)
+        self.lock = InstanceLock(s.db_path).acquire()   # one controller per state file, before touching it
         self._prepare_db()
         self.db = DB(s.db_path)
         self.ing = Ingestor(self.db, self.sim)
@@ -127,6 +129,25 @@ class Controller:
         st = self._wait_for_sim()
         p = Path(self.s.db_path)
         if not p.exists():
+            return
+        try:   # a damaged store is archived (never deleted) and rebuilt from the simulator: events are re-listable,
+            #    configs and approvals are read live, so governance stays safe; experiment memory is what is lost
+            import sqlite3
+            c = sqlite3.connect(str(p))
+            try:
+                ok = c.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+            finally:
+                c.close()   # must close even on failure: an open handle blocks the archive rename on Windows
+        except sqlite3.DatabaseError:
+            ok = False
+        if not ok:
+            arch = p.with_suffix(f".{int(time.time())}.corrupt")
+            log.error("state file %s failed integrity check; archived to %s and rebuilding from the simulator", p, arch)
+            for suf in ("", "-wal", "-shm"):
+                q = Path(str(p) + suf)
+                if q.exists():
+                    q.rename(Path(str(arch) + suf))
+            self._rebuilt_from_corrupt = str(arch)
             return
         db = DB(p)
         known = db.meta_get("scenario")
@@ -176,6 +197,12 @@ class Controller:
             self.specs[wf] = w
             self.wf_by_id[w["workflow_id"]] = wf
         restarted = db.q1("SELECT COUNT(*) FROM chunks")[0] > 0
+        if getattr(self, "_rebuilt_from_corrupt", None):
+            with db.tx():
+                db.decide(self.now, None, "error", f"state file failed its integrity check; archived to "
+                          f"{self._rebuilt_from_corrupt} and rebuilt from the simulator",
+                          reasoning="events re-ingested and approvals reconciled from the simulator; learning state"
+                                    " (experiments, caller-ID memory) restarts from scratch")
         t0 = time.time()
         n = self.ing.ingest_all()
         self.now = st["sim_minute"]

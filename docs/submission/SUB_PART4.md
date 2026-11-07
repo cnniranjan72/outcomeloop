@@ -18,10 +18,11 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
 (1 int32 per person) live in RAM.
 
 **What breaks first at 10× (≈ 8.5 M events/day, 120 workflows)** *(derived from the measurements above)*:
-1. **Per-tick decision queries.** Decisions are ~60 % of our time and scale with workflows × raw rows scanned
-   (experiment and detector windows are SQL over raw call rows). At 10× that is ~10× the decide time: still
-   inside a 15-min tick but no longer comfortable. Fix: per-(workflow, hour, cohort, variant, caller ID)
-   rollups maintained at ingest, so a decision reads hundreds of rows, not hundreds of thousands.
+1. **Per-tick decision queries — measured and fixed.** Profiling public_03 showed decisions re-aggregating raw call
+   rows over sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). Hourly rollups
+   (`did_hour`, `arm_hour`) are now maintained inside each chunk's ingest transaction — recomputed per touched
+   workflow-hour from the call rows, so they stay exactly-once under replay — and decisions read those instead:
+   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time. Measured scaling: {{SCALE}}
 2. **One SQLite writer.** Ingest at ~50k events/s is ~3 min/day at 10× — fine — but one process serialises
    ingest and decisions. Fix: partition workflows into shards (hash of `workflow_id`), one loop + checkpoint per
    shard, on the platform's Postgres with `calls` partitioned by day.
@@ -140,5 +141,4 @@ at two random seeds. The table is the simulator grader's output:
   test needs a day of post-decay data, and the effect fades over two days before it is clearly negative.
 * **Governance hygiene.** {{GOV_LINE}}
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
-  promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost;
-  an interaction check before promoting a welcome × voice combination.
+  promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost.
