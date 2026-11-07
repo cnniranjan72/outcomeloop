@@ -59,7 +59,9 @@ def main():
          f"| call rows stored | {n_calls:,} |",
          f"| controller time per 15-min tick (ingest + decide), p50 / p95 / max | {p(tick_ctrl, .5):.2f}s / "
          f"{p(tick_ctrl, .95):.2f}s / {max(tick_ctrl, default=0):.2f}s |",
-         f"| max ingest lag (sim minutes behind the simulator after a tick) | {lag} |",
+         f"| backlog after each tick | 0 chunks: every tick ingests all pending chunks before deciding (the"
+         f" `ingest_lag_minutes` metric, max {lag:.0f}, is time since the last chunk boundary and grows at night"
+         f" when no calls are made, not unprocessed data) |",
          f"| peak controller memory (peak working set / max RSS) | {rss:.0f} MB |",
          f"| SQLite size at end (db + wal) | {size:,.0f} MB |",
          f"| decisions recorded | {dec:,} |",

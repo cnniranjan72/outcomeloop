@@ -73,8 +73,8 @@ thresholds for the number of looks per day.
 
 | Detector | Signal | Window | Minimum n | Fires when |
 |---|---|---|---|---|
-| Caller-ID degraded | pickup(DID) vs pooled pickup(other DIDs) | rolling 6h and 24h | 300 dials on the DID | ratio < 0.85 **and** z < −3.5 |
-| Caller-ID healthy | same | 24h | 150 dials | ratio ≥ 0.92 and not degraded |
+| Caller-ID degraded | pickup(DID) vs pooled pickup(other DIDs), and vs the DID's own previous week | rolling 6h and 24h | 300 dials on the DID | ratio < 0.85 **and** z < −3.5 **and** (if it has a week of history) > 15 % drop vs own past, z < −3 |
+| Caller-ID healthy | same | 24h or 72h (since probe start for re-probes) | 150 dials | ratio − se ≥ 0.85 and not degraded |
 | Hallucination spike | flag rate on current prompt vs workflow's history baseline | rolling 4h / since prompt change | 250 connected | rate > 1.5× baseline **and** z > 3.5 |
 | KPI drift | workflow pickup / engagement, last 24h vs trailing 7d | daily | 1000 dials / 500 connected | relative drop > 5 % and z > 3 (alert only) |
 | Decay | winner-vs-holdout lift, recent 24h vs lift at promotion | hourly | 150 connected per arm | z < −2.33 or recent lift < 0 with z < −1.645 |
@@ -113,9 +113,13 @@ z = 3.5 one-sided ≈ 2.3e-4 per look; with ~48 looks/day/detector that's ≈1 %
 
 ## 6. Caller-ID (C5)
 
-Target allocation = equal split over DIDs classified **healthy**, 0 for **degraded**, a 5 % probe for **unknown**
-DIDs (options never dialled). Equal split minimises per-number volume, which is the standard defence against
-carrier spam-flagging; the detectors then verify the effect in our own pickup data rather than assuming it.
+Target allocation = equal split over DIDs classified **healthy**, 0 for **degraded**, a 5 % probe for untested
+DIDs, 2 % for a degraded DID being re-probed after its rest (24 h, doubling). A DID whose health is still
+**unknown keeps the share it has**: insufficient evidence never moves traffic (this matters on
+`next_campaign_only` workflows, where an allocation reaches traffic a campaign later). Equal split minimises
+per-number volume, the standard defence against carrier spam-flagging. "Degraded" needs both a relative drop
+vs the other numbers and, when the number has its own history, a drop vs that history, so steady volume fatigue
+next to a fresh number is not mistaken for a spam flag (found via the crash-recovery comparison run).
 
 ## 7. Call-time (C3/C4) — cohort level
 

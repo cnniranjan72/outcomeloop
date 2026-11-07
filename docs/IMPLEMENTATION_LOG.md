@@ -42,3 +42,20 @@ the loop continues); `run.sh` restarts the controller from durable state if it e
 
 **In parallel (subagents):** test suite, crash-recovery harness, README/architecture/operations docs and video
 materials. Load test on public_03.
+
+**Milestone 4 — tests, crash harness, load test (subagents + lead).**
+- Test suite: 152 tests (151 unit + 1 slow end-to-end). It found real bugs: decay check blind when a workflow has
+  no cohort set; minute 0 treated as missing; code/feature caches not reset after a rolled-back transaction;
+  floating-point drift against the simulator's exact allocation comparison (`canonical_config`).
+- Crash harness: 9 hard kills at state-targeted moments, 20 checks. Found: a paid validation result could be lost
+  between the ledger and the incident; a supervisor-prompt probe was forgotten if killed mid-call. Both fixed.
+- Comparing crashed vs clean runs exposed a caller-ID decision flaw (volume fatigue mistaken for a spam flag,
+  100 % of traffic concentrated on one number). Fixed with an own-history condition.
+- Further caller-ID fixes from public_01/02 audits: unknown health never moves traffic; 72 h healthy-only window
+  for low-volume probes; re-probe evidence starts at the probe.
+- Load test (public_03, final code): ~59k events/s ingest, 70–79 s controller time per simulated day for 12
+  workflows, 490 MB peak memory. An hourly week-long scan had doubled decide time; cached per 6 sim-hours.
+
+**Final results** (committed reports): public_01 +15.5 % conclusion rate, 0 harmful of 19 changes; public_02
++26.3 %, 2 harmful of 20 (small exploration costs), caller-ID incident off in ~2 h, unsafe prompt MTTR 60 min;
+crash recovery PASS (20 checks, 0 failed) with outcomes matching the uninterrupted run.
