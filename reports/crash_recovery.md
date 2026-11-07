@@ -114,15 +114,15 @@ The runs are not bit-identical and are not expected to be: a restart changes whe
 * **Evidence (first harness run, earlier session; console output and DB, not kept as a file).** Kill e landed
   after `credits_ledger` row 2 (`candidate fix for inc-ks_cancel-5025 (known_good)`, P1 pass 0.99) had
   committed as `done`, but before `_find_fix` wrote that result into the incident. After the restart, row 3
-  validated P1 **again**: 3 credits spent twice (9 used vs 6 uninterrupted).
+  validated P1 **again**: 3 credits spent twice (in that run 9 credits were used where 6 were needed).
 * **Cause.** `_find_fix` kept `tried[...]` and the chosen fix in memory, and committed them in a later,
   separate transaction from the ledger row.
 * **Fix.** `src/outcomeloop/controller.py`:
-  * `_validate(..., persist=None)` (line 603) runs `persist(run)` inside the transaction that marks the ledger
-    row `done` (line 625).
-  * `_find_fix` uses it through `keep()` (lines 662–680), so the result, `tried` and the fix selection commit
+  * `_validate(..., persist=None)` runs `persist(run)` inside the transaction that marks the ledger
+    row `done`.
+  * `_find_fix` uses it through `keep()`, so the result, `tried` and the fix selection commit
     together.
-  * LLM suggestions are now stored on the incident in the same transaction as their ledger row (line 652).
+  * LLM suggestions are now stored on the incident in the same transaction as their ledger row.
 
 ### 6.2 Supervisor-prompt probe forgotten on a crash during the validation call (fixed, committed in d3e6bb2)
 
@@ -138,9 +138,9 @@ The runs are not bit-identical and are not expected to be: a restart changes whe
 * **Cause.** `src/outcomeloop/controller.py`, `detect_halluc`. The old code did
   `with db.tx(): db.kv_set(f"prompt_probe:{wf}", [])` **before** `self._validate(...)`, which made the probe
   at-most-once across crashes.
-* **Fix** (lines 466–486). The probe is cleared inside `_validate`'s persist hook (`on_probe`, line 472), in
+* **Fix.** The probe is cleared inside `_validate`'s persist hook (`on_probe`), in
   the same transaction as the paid result and the incident it may open. If no validation happens (prompt moved
-  on, no credits, call failed), the probe is still dropped as before (line 482). Trade-off: the probe becomes
+  on, no credits, call failed), the probe is still dropped as before. Trade-off: the probe becomes
   at-least-once. A kill during the call re-runs it at a cost of 3 credits, which is better than leaving a bad
   customer-facing prompt unchecked.
 * **Verified.**
@@ -178,8 +178,8 @@ together with their consumers. So no *durable* state is lost. What is lost:
   stays `sent` (row 1 in this run, 3 credits). Since fix 6.2 the dependent action is retried, which costs up to
   one extra call. The ledger makes that spend visible: check 18 accounts for it.
 * **In-memory scheduling hints.**
-  * `Controller.urgent` (line 114) asks for a decision at the next tick instead of waiting for the hourly
-    cadence, and is set for example on a supervisor prompt edit (line 295). It is not persisted, so after a
+  * `Controller.urgent` asks for a decision at the next tick instead of waiting for the hourly
+    cadence, and is set for example on a supervisor prompt edit. It is not persisted, so after a
     restart the decision waits until the next hourly tick: up to 45 sim minutes, 15 in this run.
   * In-process caches (feature arrays, code maps) are rebuilt from SQLite on start.
 * **Small audit or bookkeeping gaps in microsecond windows with no I/O between commits** (not observed in any

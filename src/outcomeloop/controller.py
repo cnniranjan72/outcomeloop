@@ -433,6 +433,9 @@ class Controller:
         total = sum(n for _, _, n in rows)
         bad = sum(n for ours, theirs, n in rows if ours != db.decode("cohort", theirs))
         out = {"calls": total, "mismatched": bad}
+        with db.tx():   # recorded either way, so the guarantee is checkable from the store, not recomputed
+            db.decide(now, wf, "cohort_check", f"cohort agreement: {bad} of {total} calls assigned differently",
+                      evidence=out)
         if total and bad:
             with db.tx():
                 db.decide(now, wf, "alert", f"cohort definitions diverged: {bad}/{total} calls assigned differently"

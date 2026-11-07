@@ -129,8 +129,8 @@ itself restarts the controller if it exits abnormally.
   rollbacks of genuine winners). Under `next_campaign_only`, calls from older campaigns still running the experiment
   allocation count: they are concurrent, randomised comparisons of the same arms.
 * Rollback = proposal back to the holdout option; the decayed option is blacklisted for 7 days.
-* How fast: on public_02 the decaying `W3` share went from 64 % on the day after onset to 0 % two days later
-  {{DECAY_EVIDENCE}}. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
+* How fast: the share of in-population calls still on the decaying `W3` after its decay onset, by simulated day,
+  from the grader {{DECAY_EVIDENCE}} — typically 2–4 days from onset to 0 %. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
 
 ### Call time and caller ID (C4, C5)
 * **History (C3).** 14 days (7 on load) of calls under the business default give per-cohort hour-of-day pickup

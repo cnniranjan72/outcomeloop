@@ -187,7 +187,7 @@ happened after (post-apply verification decisions).
 
 ## 11. Impact score, affected leads, dry run (C10)
 
-* `impact_score = clip(lift_lcb / 0.10, 0, 1) × share_affected`, where `lift_lcb` is the 80 % lower confidence
+* `impact_score = clip(lift_lcb / 0.10, 0, 1) × (1 − holdout share)` for a promotion, where `lift_lcb` is the 80 % lower confidence
   bound of the relative primary-KPI lift from the dry run (0 for pure exploration). Exploration proposals carry a
   fixed 0.15 (`learning`), validated incident fixes 0.9. All components are shown in the proposal so the
   supervisor's queue ranking is explainable.
