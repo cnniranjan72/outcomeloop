@@ -77,3 +77,22 @@ percentages, `run.sh` path portability (native path via `pwd -W`), review guide 
 
 **Trade accepted:** ~2–3 points less public_01 lift than the public-only-tuned version, in exchange for the
 failure modes above.
+
+## 2026-11-07 (late) — adversarial audit and final evidence
+
+- **Linux re-verified** in Docker on the final commit; **graceful shutdown** added (SIGTERM forwarded by run.sh,
+  stop between steps, exit 143) and proven in a container (`scripts/graceful_stop_test.sh`).
+- **Independent read-only audit** (20 findings). Fixed: a withdrawn promotion's approval was still applied
+  (now WITHDRAWN); our routine approval could stale an incident fix (emergencies apply first); a transient error
+  dropped a supervisor event (events retried, workflow held); incidents stuck or blocking (superseded/APPLIED
+  handling); cohort-winner family re-spent α (80/20 split); Simpson mixing in the decay test (stratified by
+  version); experiments stuck in promoting; rollback urgency lost after an hour; repeated auto-apply 403s;
+  confirmation validation not crash-atomic; supervisor caller-ID silently re-spread after the lock; plus low items.
+- **The interview-prep review found a KeyError** on pending cohort-level promotions that blocked a workflow's
+  decisions every hour (156 errors in one suite run, masked by per-workflow isolation). Fixed, regression test,
+  and a new paging rule for a persistently failing workflow. The robustness summary now reports decision errors
+  (0 in all 16 final runs) and false winners from our own store (2 in 16 null experiments).
+- **Cohort agreement** with the simulator's `cohort_id` is now checked daily (previously claimed, not implemented;
+  0 mismatches on 95k calls).
+- Final evidence on the final decision logic: public_01 +13.9 % (0 harmful), public_02 +25.6 % (MTTR 60 min),
+  load ~55k events/s and 72–89 s controller time per simulated day, crash recovery PASS (20/0), 174 + 2 tests.

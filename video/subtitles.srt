@@ -208,11 +208,11 @@ against a no-op baseline.
 43
 00:03:50,000 --> 00:03:55,000
 Development scenario conclusion rate:
-+13.3%
++13.9%
 
 44
 00:03:55,000 --> 00:04:00,000
-Incidents scenario: +26.8%
+Incidents scenario: +25.6%
 Unsafe prompt fixed in 60 min
 
 45
@@ -227,13 +227,13 @@ harmful. Exploring has a cost.
 
 47
 00:04:11,000 --> 00:04:17,000
-Load: ~57,000 events/s,
-69–91 s per simulated day
+Load: ~55,000 events/s,
+72–89 s per simulated day
 
 48
 00:04:17,000 --> 00:04:23,000
-Memory: 491 MB
-Tests: 162 (161 unit + 1 slow end-to-end)
+Memory: 494 MB
+Tests: 176 (174 unit + 2 slow integration)
 
 49
 00:04:23,000 --> 00:04:29,500

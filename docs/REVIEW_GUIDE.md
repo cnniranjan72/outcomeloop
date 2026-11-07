@@ -87,8 +87,10 @@ exposure (Compliance: slow and right). Cost: tests take ~1.5× longer. The harm 
 arm early.
 
 **"Your false-winner rate?"** ≤ 5 % per (workflow, dimension) by construction: Holm across challengers × an
-explicit O'Brien-Fleming α budget across looks (Bonferroni over looks, conservative). Out-of-sample check: the
-null-effects scenario in our suite (no true effects) applied **0 harmful** changes — see `reports/robustness.md`.
+explicit O'Brien-Fleming α budget across looks (Bonferroni over looks, conservative). Out-of-sample check, measured
+from our own audit store: on the null-effects scenario (no true effects) 2 winners in 16 experiments — consistent
+with ≤ 5 % (P ≈ 0.19 of ≥ 2 at exactly 5 %), not proof of it; the pooled one was rolled back by the holdout decay
+test. Don't cite the grader's "0 harmful" there: a null variant change is neutral by construction.
 
 **"Isn't the extension rule p-hacking?"** It's pre-registered (one extension, only if the best challenger trends
 positive), and half of the remaining α is reserved at the first horizon for it, so total α spent stays ≤ 0.05.

@@ -13,13 +13,13 @@ the simulator.
 
 | Headline (from `reports/`) | Value |
 |---|---|
-| public_01 conclusion-rate lift vs no-op baseline, all workflows | `+13.3%` |
-| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+26.8%` |
+| public_01 conclusion-rate lift vs no-op baseline, all workflows | `+13.9%` |
+| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+25.6%` |
 | public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `60` |
-| public_03 ingest throughput | `~57,000` events/s |
-| public_03 controller seconds per simulated day (ingest + decide) | `69–91 s` |
-| public_03 peak controller memory | `491 MB` |
-| Unit tests | `162 (161 unit + 1 slow end-to-end)` |
+| public_03 ingest throughput | `~55,000` events/s |
+| public_03 controller seconds per simulated day (ingest + decide) | `72–89 s` |
+| public_03 peak controller memory | `494 MB` |
+| Unit tests | `176 (174 unit + 2 slow integration)` |
 | Crash-recovery run (kill / restart / verify) | `9 hard kills, 20 verification checks, 0 failed` |
 
 The full figures are in `reports/public_01_dev.md`, `reports/public_02_incidents.md`, `reports/public_03.md`,
@@ -980,9 +980,9 @@ and no pager is connected. The table below is the policy we recommend for produc
 Measured on `public_03_load` (12 workflows, about 650k dials/day, about 850k events/day). All numbers come from
 `reports/public_03.md`, which `scripts/load_report.py` builds from our own `metrics` and `chunks` tables:
 
-- ingest throughput: `~57,000` events/s
-- controller time per simulated day (ingest + decide): `69–91 s`. The SRE target is under 600 s.
-- peak memory: `491 MB`
+- ingest throughput: `~55,000` events/s
+- controller time per simulated day (ingest + decide): `72–89 s`. The SRE target is under 600 s.
+- peak memory: `494 MB`
 
 The report also gives per-tick p50/p95/max controller time, maximum ingest lag, DB size and the per-day table.
 
@@ -1103,7 +1103,7 @@ python -m pytest -q                       # unit tests (fast); slow tests are sk
 OUTCOMELOOP_SLOW=1 python -m pytest -q    # also runs tests marked slow (start a simulator)
 ```
 
-Result at the time of writing: `162 (161 unit + 1 slow end-to-end)`.
+Result at the time of writing: `176 (174 unit + 2 slow integration)`.
 
 `tests/unit/` covers:
 

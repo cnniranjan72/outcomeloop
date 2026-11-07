@@ -1,9 +1,15 @@
 How to read it, and what it taught us:
 
-* **False winners.** `r3_null_effects` has no true welcome/voice effects, so every variant change it applies is
-  acting on noise. Across both seeds the grader marks **0 harmful** changes: the tests found nothing to promote
-  because there was nothing to find. Its lift comes from caller-ID load spreading and call-hour weights, which do
-  not depend on variant effects. This is the out-of-sample check of the α-spending / Holm design.
+* **False winners — measured, not inferred.** `r3_null_effects` has no true welcome/voice effects, so every
+  experiment winner there is a false winner. The grader's "0 harmful" on it is weak evidence (a null variant change
+  is neutral by construction), so the table counts winners from our own audit store: **2 winners in 16 null
+  experiments** across the two seeds. The design bounds the false-winner rate at ≤ 5 % per experiment (Holm ×
+  explicit O'Brien-Fleming budget; every experiment's spent α ≤ 0.05 in the store); 16 experiments give an expected
+  ≤ 0.8 false winners, and observing ≥ 2 has probability ≈ 0.19 at exactly 5 % — consistent with the bound, not
+  proof of it. Both were near the boundary (pooled z = 3.04 against a Holm threshold of p 0.0054; a cohort-level
+  z = 3.35). The pooled one was later **rolled back by the holdout decay test** — the second line of defence
+  working as intended. Before our audit fix, the cohort-level family re-spent the look's α (a real 2α bug); it now
+  gets 20 % of it.
 * **Generalisation.** Every scenario improves the conclusion rate at both seeds, including truths we never tuned
   on (`r1`), policies with no auto-apply and short TTLs (`r2`), and odd shapes (`r6`). Seed replicas agree to
   within a few points, so the gains are not luck.

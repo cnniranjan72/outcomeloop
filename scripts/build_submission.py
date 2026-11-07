@@ -105,9 +105,9 @@ def main():
     crash_line = f"{cm.group(1)}: {cm.group(2)} checks, {cm.group(5)} failed" if cm else "see report"
     ct = re.search(r"With kills.*?\| ALL \| [\d.]+ \| ([+\-\d.%]+) \|", crash, re.S)
     cu = re.search(r"Uninterrupted.*?\| ALL \| [\d.]+ \| ([+\-\d.%]+) \|", crash, re.S)
-    cc = re.search(r"Code: commit `(\w+)`", crash)
-    crash_outcome = (f"conclusion rate {ct.group(1)} vs baseline with 9 kills vs {cu.group(1)} uninterrupted, both at the"
-                     f" crash run's commit `{cc.group(1) if cc else '?'}`" if ct and cu else "see report")
+    cc = re.search(r"decision logic of commit `(\w+)`", crash)
+    crash_outcome = (f"conclusion rate {ct.group(1)} vs baseline with 9 kills vs {cu.group(1)} uninterrupted, both on the"
+                     f" final decision logic (commit `{cc.group(1) if cc else '?'}`)" if ct and cu else "see report")
 
     # ---------------------------------------------------------------- per-run facts
     a1, a2 = g1["delta_vs_baseline"]["ALL"]["conclusion_rate"], g2["delta_vs_baseline"]["ALL"]["conclusion_rate"]
@@ -137,10 +137,12 @@ def main():
     _rows = [l for l in rb.splitlines() if l.startswith("| ") and not l.startswith("| scenario")]
     _lifts = [float(m.group(1)) for l in _rows for m in [re.search(r"\| ([+-][\d.]+)% \(", l)] if m]
     _null = [l for l in _rows if l.startswith("| r3_null")]
-    _null_harm = sum(int(re.search(r"/(\d+)-\)", l).group(1)) for l in _null) if _null else None
+    _wins = [l.split("|")[9].strip() for l in _null] if _null else []
+    _fw = sum(int(w.split("/")[0]) for w in _wins if "/" in w)
+    _fe = sum(int(w.split("/")[1]) for w in _wins if "/" in w)
     _ok = sum(1 for l in _rows if l.split("|")[2].strip() == "0")
     robust_headline = (f"{_ok}/{len(_rows)} runs finished with run.sh exit 0; conclusion rate {min(_lifts):+.1f}% to {max(_lifts):+.1f}% vs "
-                       f"baseline; {_null_harm} harmful changes on the no-effects scenario" if _lifts else "not run")
+                       f"baseline; {_fw} false winners in {_fe} experiments on the no-effects scenario (§11)" if _lifts else "not run")
     robust_notes = (D / "ROBUST_NOTES.md").read_text(encoding="utf-8").strip() if (D / "ROBUST_NOTES.md").exists() else ""
 
     # ---------------------------------------------------------------- stakeholder / assumption corrections
