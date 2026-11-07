@@ -162,3 +162,21 @@ def test_determinism():
                                                      sample_size_per_arm(0.37, 0.1, 0.025, 0.8, 3.0),
                                                      obf_spent(0.37, 0.05)]
         assert again == first
+
+
+def test_fail_ucb_matches_exact_clopper_pearson():
+    from outcomeloop.stats import fail_ucb
+    assert fail_ucb(0, 100) == pytest.approx(1 - 0.05 ** (1 / 100), abs=1e-4)     # 2.95 %
+    assert fail_ucb(1, 100) == pytest.approx(0.0466, abs=5e-4)
+    assert fail_ucb(0, 0) == 1.0 and fail_ucb(5, 5) == 1.0
+
+
+def test_small_validation_cannot_overrule_a_production_alarm_on_a_fresh_prompt():
+    # r5: the persuasive prompt (true 2.5% hallucination) validated at 0.99 on 100 calls (1 failure) and vetoed
+    # hundreds of production calls; the incident then waited 24 h. One failure in 100 does not demonstrate < 3%.
+    from outcomeloop.stats import validation_vetoes
+    assert validation_vetoes(1, 100, 0.97)[0] is False
+    assert validation_vetoes(0, 100, 0.97)[0] is True          # a clean run still can
+    assert validation_vetoes(3, 300, 0.97)[0] is True          # a 300-call run of a good prompt can
+    # r1 seed 2: 4 failures in 300 (0.987) vetoed a true-2.5% prompt at the 90% bound (2.65%); not at 95% (3.03%)
+    assert validation_vetoes(4, 300, 0.97)[0] is False

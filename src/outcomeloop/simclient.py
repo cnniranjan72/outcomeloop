@@ -153,12 +153,15 @@ class SimClient:
         params = {k: v for k, v in (("workflow_id", workflow_id), ("status", status)) if v}
         return self._get("/approvals", **params)
 
-    def iter_chunk(self, n: int, expect: int | None = None) -> Iterator[dict]:
+    def iter_chunk(self, n: int, expect: int | None = None, keep=None) -> Iterator[dict]:
         """Stream a chunk one event at a time (constant memory: a history chunk is 250k events, ~490 MB as parsed
         dicts). Any incomplete read raises ChunkReadError: a connection reset mid-stream, a truncated or malformed
         line, a 5xx, or — when `expect` (the listed event count) is given — a response that ends cleanly but short.
         The caller consumes inside one transaction, so on ChunkReadError it rolls back and re-reads the whole
-        chunk (`Ingestor.ingest_chunk`): a chunk is never half-ingested."""
+        chunk (`Ingestor.ingest_chunk`): a chunk is never half-ingested.
+
+        `keep(line) -> bool`, if given, is applied to the raw line *before* JSON parsing (sharding: a shard parses only
+        its own workflows' events; parsing is the dominant ingest cost). Every line still counts toward `expect`."""
         loads = json.loads
         self.calls += 1
         count = 0
@@ -171,9 +174,9 @@ class SimClient:
                     self._raise_for(r)
                 for line in r.iter_lines():
                     if line:
-                        ev = loads(line)
                         count += 1
-                        yield ev
+                        if keep is None or keep(line):
+                            yield loads(line)
         except (httpx.TransportError, ValueError) as e:
             self.errors += 1
             raise ChunkReadError(f"chunk {n}: {type(e).__name__}: {e}") from e

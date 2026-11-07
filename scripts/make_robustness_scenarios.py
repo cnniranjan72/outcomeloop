@@ -12,6 +12,8 @@ Each variant targets a failure mode a hidden scenario could expose:
   r5_low_credits      12 credits, two prompt incidents (credit discipline; LLM must not burn the budget)
   r6_odd_shapes       single-option dims, 5 caller IDs two of them bad from the start, unusual language mix,
                       pickup-primary workflow with a tight guardrail, next_campaign_only everywhere
+  r7_credit_contention 10 credits, two tenants ship unsafe prompts on the same morning (cross-tenant credit
+                      contention: the fair share must let both incidents get fixed)
 """
 from __future__ import annotations
 
@@ -129,6 +131,17 @@ def r6():
     return sc
 
 
+def r7():
+    sc = base()
+    sc.update(name="r7_credit_contention", seed=7707, credits=10)
+    wf(sc, "nw_renewal")["options"]["prompt_version"].append("P2")   # so both tenants can ship the unsafe prompt
+    sc["incidents"] = [
+        {"type": "supervisor_edit", "workflow": "ks_cancel", "at": "D3 10:00", "patch": {"prompt_version": "P2"}},
+        {"type": "supervisor_edit", "workflow": "nw_renewal", "at": "D3 10:30", "patch": {"prompt_version": "P2"}},
+    ]
+    return sc
+
+
 def public(name):
     def f():
         return yaml.safe_load((ROOT / "scenarios" / f"{name}.yaml").read_text(encoding="utf-8"))
@@ -139,7 +152,7 @@ def main():
     import os
     OUT.mkdir(parents=True, exist_ok=True)
     reps = int(os.environ.get("SEED_REPLICAS", "1"))
-    makers = [r1, r2, r3, r4, r5, r6]
+    makers = [r1, r2, r3, r4, r5, r6, r7]
     for rep in range(reps):
         for f in makers + ([public("public_01_dev"), public("public_02_incidents")] if rep else []):
             sc = f()

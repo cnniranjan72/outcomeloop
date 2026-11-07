@@ -26,9 +26,18 @@ from .persontime import PersonTime
 from .governance import Governance
 from .ingest import Ingestor
 from .simclient import ApiError, SimClient, Uncertain
-from .stats import tv_distance
+from .stats import tv_distance, validation_vetoes
 from .timeutil import minute_to_label
 
+
+
+def fair_share_ok(spent: dict, tenant, cost: float, budget0: float, n_tenants: int, contenders: set) -> bool:
+    """Work-conserving fair share of one credit pool: a tenant may always spend while no *other* tenant has an open
+    incident; under contention it may spend only up to its equal share of the starting budget."""
+    others = {t for t in contenders if t != tenant}
+    if not others or n_tenants <= 1:
+        return True
+    return spent.get(tenant, 0.0) + cost <= budget0 / n_tenants
 
 
 def _clone(cfg):
@@ -688,7 +697,8 @@ class Controller:
             p = probes[-1]
             thr = spec["governance"].get("min_validation_pass_rate", 0.97)
             run = None
-            if p["prompt"] == prompt and self.sim.state()["credits_remaining"] >= 10:
+            # 1 credit at the low-credit size (100 calls); 4 keeps enough for confirm + fix of what it finds
+            if p["prompt"] == prompt and self.sim.state()["credits_remaining"] >= 4:
                 def on_probe(r, inc_open=bool(open_inc), prior=p.get("prior")):
                     # inside _validate's ledger transaction: the paid result, the probe's state and the incident
                     # commit together. Clearing the probe BEFORE the call lost it on a crash mid-call (the
@@ -697,18 +707,23 @@ class Controller:
                     if prior:   # second run: decide on the pooled sample
                         fails, n = fails + prior["failures"], n + prior["n"]
                     pooled = 1 - fails / n
-                    se = (pooled * (1 - pooled) / n) ** 0.5
-                    if not prior and thr <= pooled < thr + se and self.sim.state()["credits_remaining"] >= 30:
-                        # within one standard error of the threshold: a coin flip, not a pass. Buy a second run
-                        # next tick and decide on the pooled evidence.
+                    # a new prompt must *demonstrate* it clears the approver's own gate: the 95% upper bound on its
+                    # failure rate within 1 - threshold (same standard as the confirmation veto)
+                    safe, ucb = validation_vetoes(fails, n, thr)
+                    if not prior and not safe and pooled >= thr and self.sim.state()["credits_remaining"] >= 30:
+                        # passes on the point estimate but not with confidence: buy a second run next tick and
+                        # decide on the pooled evidence (a 2.5% prompt passes a 300-call run 78% of the time)
                         db.kv_set(f"prompt_probe:{wf}", [{**p, "prior": r}])
                         self.urgent.add(wf)
                         return
                     db.kv_set(f"prompt_probe:{wf}", [])
-                    if pooled < thr and not inc_open:
+                    if (pooled < thr or (prior and not safe)) and not inc_open:
                         self._open_incident(wf, prompt, now, {"trigger": "validation_probe", "validation": r,
                                                               "prior_validation": prior, "pooled_pass_rate":
-                                                              round(pooled, 4), "pooled_n": n, "threshold": thr})
+                                                              round(pooled, 4), "pooled_n": n, "threshold": thr,
+                                                              "failure_ucb95": round(ucb, 4),
+                                                              "basis": "below the gate" if pooled < thr else
+                                                              "not shown to clear the gate after pooled runs"})
                 run = self._validate(wf, spec, prompt, purpose=f"probe supervisor prompt change v{p['version']}"
                                      + (" (second run, pooled)" if p.get("prior") else ""), persist=on_probe)
             if run is None:   # prompt moved on, no credits, or the call failed: drop the probe as before
@@ -717,8 +732,9 @@ class Controller:
             else:
                 open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state!='closed'"
                                  " ORDER BY opened_minute DESC", (wf,))
-        since = db.q1("SELECT MAX(minute) FROM config_versions WHERE wf=? AND changed_dims LIKE '%prompt_version%'",
-                      (wf,))[0] or (now - 1440)
+        changed_at = db.q1("SELECT MAX(minute) FROM config_versions WHERE wf=? AND changed_dims LIKE"
+                           " '%prompt_version%'", (wf,))[0]
+        since = changed_at if changed_at is not None else now - 1440
         sp = halluc_spike(db, wf, prompt, max(since, now - 1440), now, ref, self.s)
         ctx["evidence"]["halluc"] = sp
         quiet = db.kv_get(f"halluc_quiet:{wf}", {})
@@ -749,9 +765,22 @@ class Controller:
                 if run is None:
                     return   # no second signal yet (credits, transport): retry next tick, never act on flags alone
                 se = (run["pass_rate"] * (1 - run["pass_rate"]) / run["n"]) ** 0.5 if run else 0
-                # the production detector has already fired: only a clearly safe validation (>= threshold + 1 SE)
-                # vetoes it; a result inside the noise band of the threshold gives the benefit of the doubt to safety
-                if run and run["pass_rate"] >= thr + se:
+                # the production detector has already fired, so the validation must clear a bar before it vetoes:
+                # - a prompt changed in the last 3 days (the classic incident: a new script ships) must *demonstrate*
+                #   safety: the 95% upper bound on its failure rate within the policy limit. A 100-call run with one
+                #   failure cannot tell a 0.6% prompt from a 2.5% one, and must not overrule hundreds of calls.
+                # - the long-standing prompt (the detector's own reference) keeps the 1-SE rule: a spike there is
+                #   more often noise, and "fixing" a good production script costs engagement (attack #30).
+                fresh = changed_at is not None and now - changed_at <= 3 * 1440
+                if fresh:
+                    veto, ucb = validation_vetoes(run.get("failures", round((1 - run["pass_rate"]) * run["n"])),
+                                                  run["n"], thr, conf=0.95)
+                    d["veto_rule"] = {"rule": "fresh prompt: 95% UCB of failure rate <= 1 - threshold",
+                                      "failure_ucb": round(ucb, 4), "limit": round(1 - thr, 4), "veto": veto}
+                else:
+                    veto = run["pass_rate"] >= thr + se
+                    d["veto_rule"] = {"rule": "reference prompt: pass rate >= threshold + 1 SE", "veto": veto}
+                if run and veto:
                     with db.tx():
                         db.x("UPDATE incidents SET state='closed', closed_minute=?, data=? WHERE incident_id=?",
                              (now, dumps(d), iid))
@@ -850,14 +879,33 @@ class Controller:
                            reasoning="population evidence (validation run of n synthetic calls, or QA flag rate on"
                                      " >=250 connected calls) shows the live prompt is unsafe")
 
-    def _credits_ok(self, cost: float, incident: bool) -> bool:
+    def _credits_ok(self, cost: float, incident: bool, wf: int | None = None) -> bool:
         st = self.sim.state()
         budget0 = self.db.kv_get("credits_start") or st["credits_remaining"]
         if not self.db.kv_get("credits_start"):
             with self.db.tx():
                 self.db.kv_set("credits_start", budget0)
         floor = 0 if incident else budget0 * self.s.credit_incident_reserve
-        return st["credits_remaining"] - cost >= floor
+        if st["credits_remaining"] - cost < floor:
+            return False
+        if wf is None:
+            return True
+        # C15: one credit pool for every tenant. Work-conserving fair share: refuse only while another tenant has an
+        # open incident AND this tenant has already used more than its equal share of the starting budget.
+        db = self.db
+        tenant = {w: t for w, t in db.q("SELECT wf, tenant_id FROM workflows")}
+        spent: dict[str, float] = {}
+        for w, c in db.q("SELECT wf, SUM(cost) FROM credits_ledger WHERE state IN ('sent','done') GROUP BY wf"):
+            spent[tenant.get(w)] = spent.get(tenant.get(w), 0.0) + (c or 0.0)
+        contenders = {tenant.get(w) for (w,) in db.q("SELECT DISTINCT wf FROM incidents WHERE state!='closed'")}
+        ok = fair_share_ok(spent, tenant.get(wf), cost, budget0, len(set(tenant.values())), contenders)
+        if not ok:
+            with db.tx():
+                db.decide(self.now, wf, "hold", f"credit spend waits: tenant {tenant.get(wf)} is over its fair share"
+                          f" ({spent.get(tenant.get(wf), 0):.0f} of {budget0 / max(len(set(tenant.values())), 1):.1f})"
+                          f" while another tenant has an open incident",
+                          reasoning="one credit pool across tenants; work-conserving fair share (C15)")
+        return ok
 
     def _validation_n(self) -> int:
         """300 synthetic calls when credits are plentiful, fewer when scarce: a 100-call run (1 credit) still
@@ -870,7 +918,7 @@ class Controller:
         leave a paid-for validation committed in the ledger but unknown to the state that uses it."""
         n = self._validation_n()
         cost = math.ceil(n / 100)
-        if not self._credits_ok(cost, incident=True):
+        if not self._credits_ok(cost, incident=True, wf=wf):
             return None
         with self.db.tx():
             cur = self.db.x("INSERT INTO credits_ledger (minute, wf, kind, purpose, state, cost, request) VALUES"
@@ -907,7 +955,7 @@ class Controller:
             cands = [(x["prompt_version"], "llm") for x in d.get("llm_suggestions", []) if x["prompt_version"] not in tried]
         if not cands and not d.get("llm_called"):
             cost = 3
-            if self._credits_ok(cost, incident=True):
+            if self._credits_ok(cost, incident=True, wf=wf):
                 try:
                     with db.tx():
                         lid = db.x("INSERT INTO credits_ledger (minute, wf, kind, purpose, state, cost) VALUES"

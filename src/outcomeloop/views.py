@@ -199,13 +199,15 @@ def customer(db: DB, person_id: str, day: int | None) -> str:
     if day is not None:
         sql += " AND minute>=? AND minute<?"
         args += [day * 1440, (day + 1) * 1440]
-    out = [f"# calls to {person_id}" + (f" on D{day}" if day is not None else "")]
+    out = [f"# calls to {person_id}" + (f" on D{day}" if day is not None else ""),
+           "  time      cohort     heard (welcome voice prompt) from caller ID  outcome    config version and who set it"]
     for m, ver, coh, wm, vo, did, pr, conn, eng in db.q(sql + " ORDER BY minute", args):
         v = db.q1("SELECT actor, proposal_id, approval_id FROM config_versions WHERE wf=? AND version=?", (wf, ver))
-        out.append(f"{minute_to_label(m)} cohort={db.decode('cohort', coh)} heard welcome={db.decode('welcome_message', wm)}"
-                   f" voice={db.decode('voice', vo)} prompt={db.decode('prompt_version', pr)} from {db.decode('caller_id', did)}"
-                   f" | connected={bool(conn)} engaged={bool(eng)} | config v{ver}"
-                   + (f" set by {v[0]} (proposal {v[1]}, approval {v[2]})" if v else " (business default)"))
+        outcome = "engaged" if eng else ("connected" if conn else "no answer")
+        who = (f"by {v[0]} · {v[1]}" + (f" · {v[2]}" if v[2] else " · auto route") if v else "business default")
+        out.append(f"{minute_to_label(m)}  {db.decode('cohort', coh)}  heard {db.decode('welcome_message', wm)}"
+                   f" {db.decode('voice', vo)} {db.decode('prompt_version', pr)} from {db.decode('caller_id', did)}"
+                   f"  {outcome:<9}  config v{ver} {who}")
     out.append("Run `why <workflow> --at <time>` on any config version above for the reasoning and approver.")
     return "\n".join(out)
 

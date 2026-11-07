@@ -90,10 +90,32 @@ class FeatureStore:
         return a is not None and person < len(a) and a[person] >= 0
 
 
+def shard_of(workflow_id: str, shards: int) -> int:
+    """Stable shard assignment (same on every process and restart): sha256 of the workflow id, mod `shards`."""
+    import hashlib
+    return int.from_bytes(hashlib.sha256(workflow_id.encode()).digest()[:8], "big") % shards
+
+
+def workflow_line_filter(mine: set[str]):
+    """Raw-line pre-filter for a shard: keep lines of our workflows, and lines with no workflow at all. A substring
+    find on the compact JSON the simulator emits; anything unexpected is kept (parsing then decides)."""
+    key = '"workflow_id":"'
+
+    def keep(line: str) -> bool:
+        i = line.find(key)
+        if i < 0:
+            return True
+        j = line.find('"', i + 15)
+        return j < 0 or line[i + 15:j] in mine
+    return keep
+
+
 class Ingestor:
-    def __init__(self, db: DB, sim: SimClient):
+    def __init__(self, db: DB, sim: SimClient, workflows: set[str] | None = None):
         self.db = db
         self.sim = sim
+        # sharding prototype: ingest only these workflows (None = all). Not used by run.sh (single process).
+        self.keep = workflow_line_filter(workflows) if workflows else None
         db.x(INBOX_SQL)
         db.x("CREATE INDEX IF NOT EXISTS inbox_pending ON inbox (wf, event_id) WHERE done=0")
         self.features = FeatureStore(db)
@@ -168,7 +190,8 @@ class Ingestor:
         with db.tx():
             if db.q1("SELECT 1 FROM chunks WHERE chunk=?", (meta["chunk"],)):
                 return 0  # already ingested (crash after commit, before caller noticed)
-            for ev in self.sim.iter_chunk(meta["chunk"], meta.get("events")):
+            for ev in (self.sim.iter_chunk(meta["chunk"], meta.get("events"), keep=self.keep) if self.keep
+                       else self.sim.iter_chunk(meta["chunk"], meta.get("events"))):
                 n += 1
                 t = ev["type"]
                 wid = ev.get("workflow_id")

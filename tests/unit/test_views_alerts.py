@@ -52,3 +52,15 @@ def test_audit_kind_prefix_wildcard_matches_a_lifecycle_and_escapes_underscore(d
     assert "experiment_designed" in out and "experiment_winner" in out
     assert "experimentXwinner" not in out and "did_health" not in out       # '_' is literal, not a LIKE wildcard
     assert views.audit(db, None, "did_health", 50).count("did_health") == 2  # exact kind unchanged (kind + summary)
+
+
+def test_customer_view_names_what_was_heard_and_who_set_it(db):
+    from helpers import add_calls
+    db.x("INSERT INTO workflows (wf, workflow_id) VALUES (0, 'wfA')") if not db.q1("SELECT 1 FROM workflows WHERE workflow_id='wfA'") else None
+    wf = db.q1("SELECT wf FROM workflows WHERE workflow_id='wfA'")[0]
+    db.x("INSERT INTO config_versions (wf, version, actor, minute, changed_dims, proposal_id, approval_id, event_id)"
+         " VALUES (?,1,'controller_approved',0,'[]','ol-1','apr_1',1)", (wf,))
+    add_calls(db, wf, 1, 1, 1, minute=600, voice="V3")
+    person = db.q1("SELECT person FROM calls")[0]
+    out = views.customer(db, f"wfA:p{person}", None)
+    assert "heard W1 V3 P1 from D1" in out and "engaged" in out and "by controller_approved · ol-1 · apr_1" in out

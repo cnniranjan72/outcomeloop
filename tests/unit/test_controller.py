@@ -312,3 +312,14 @@ def test_post_apply_verification_flags_a_guardrail_breach(ctl, db):
     assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='alert'")[0] == 1
     ctl.verify_applied(ctl.wf, spec, t + 1500)                                 # verified once, not again
     assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='post_apply_verification'")[0] == 1
+
+
+def test_fair_share_is_work_conserving_and_binds_only_under_contention():
+    from outcomeloop.controller import fair_share_ok
+    spent = {"t1": 6.0, "t2": 0.0}
+    # no other tenant needs credits: t1 may keep spending past its share
+    assert fair_share_ok(spent, "t1", 3, 12, 3, contenders={"t1"})
+    # t2 has an open incident and t1 already used more than 12/3: t1 waits, t2 may spend
+    assert not fair_share_ok(spent, "t1", 1, 12, 3, contenders={"t1", "t2"})
+    assert fair_share_ok(spent, "t2", 3, 12, 3, contenders={"t1", "t2"})
+    assert fair_share_ok({"t1": 50.0}, "t1", 3, 12, 1, contenders={"t1", "t2"})   # single tenant: never binds

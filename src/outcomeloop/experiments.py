@@ -407,10 +407,13 @@ class ExperimentEngine:
         e.status = "promoting"
 
     def plan_drop(self, e: Experiment, arms: list[str]) -> None:
+        """A dropped (significantly worse) arm's share goes back to the incumbent, not to the other challengers:
+        each remaining challenger keeps its sample rate (so its test keeps its power and timeline) and exposure to
+        unproven options only ever shrinks. (Renormalising across all live arms raised every other challenger's
+        share — 13.3% -> 15.4% each when one of three is dropped — increasing exposure to options not yet shown safe.)"""
         e.dropped = sorted(set(e.dropped) | set(arms))
-        live = {o: w for o, w in e.design.items() if o not in e.dropped}
-        z = sum(live.values())
-        e.design = {o: round(w / z, 4) for o, w in live.items()}
+        others = {o: round(w, 4) for o, w in e.design.items() if o not in e.dropped and o != e.incumbent}
+        e.design = {e.incumbent: round(1.0 - sum(others.values()), 4), **others}
         e.plan = {"default": e.design}
 
     def plan_no_winner(self, e: Experiment) -> None:

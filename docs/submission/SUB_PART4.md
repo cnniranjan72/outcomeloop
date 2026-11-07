@@ -15,14 +15,17 @@ In wall-clock time the controller's own work per 15-minute tick is {{LOAD_TICK}}
 **SRE's target** (one simulated day in < 10 wall-clock minutes on 4 vCPU / 8 GB): our share is
 {{LOAD_CTRL_DAY}} per simulated day on a laptop; the rest of the wall time is the simulator generating the
 world. Memory stays small because analysis is SQL over an on-disk table; only per-person feature arrays
-(1 int32 per person) live in RAM.
+(1 int32 per person) live in RAM, and chunks are streamed, never held whole. Peak memory on public_03 is
+**360 MB**: it had risen to 1,046 MB when the partial-response fix began parsing each 250k-event history chunk into a
+list (+487 MB, measured); chunks stream again and an incomplete read rolls the chunk's transaction back and is
+re-read whole (`reports/memory.md`).
 
 **What breaks first at 10× (≈ 8.5 M events/day, 120 workflows)** *(derived from the measurements above)*:
 1. **Per-tick decision queries — measured and fixed.** Profiling public_03 showed decisions re-aggregating raw call
    rows over sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). Hourly rollups
    (`did_hour`, `arm_hour`) are now maintained inside each chunk's ingest transaction — recomputed per touched
    workflow-hour from the call rows, so they stay exactly-once under replay — and decisions read those instead:
-   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time in an isolated measurement (15–27 s decide in the final load run on a busier shared host, `reports/public_03.md`). Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
+   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time in an isolated measurement (15–27 s decide in the final load run on a busier shared host, `reports/public_03.md`). Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`, `scripts/scaling.sh`): controller time per simulated day ~49 s → ~139 s (2.8× for 3× the events and workflows), peak memory 272 → 345 MB, 0 decision errors — linear; ≈ 460 s/day *projected* at 10× (under the 600 s target, modest headroom). The first limit is ingest CPU on one core (70 % of ingest time is reading, parsing and the per-event transform; SQLite under a third — `scripts/bench_ingest.py --phases`), so the 10× answer is sharding workflows across processes.
 2. **One SQLite writer.** Ingest at ~50k events/s is ~3 min/day at 10× — fine — but one process serialises
    ingest and decisions. Fix: partition workflows into shards (hash of `workflow_id`), one loop + checkpoint per
    shard, on the platform's Postgres with `calls` partitioned by day.
@@ -57,7 +60,10 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
 * **One controller per state file.** An exclusive OS lock on `<db>.lock` is taken before the store is opened; a
   second controller on the same state is refused (two would duplicate submissions). Released by the OS on SIGKILL.
 * **Corrupted state.** `PRAGMA quick_check` at start-up; a damaged store is archived and rebuilt from the simulator
-  (an approval we can no longer explain is adopted as `WITHDRAWN`, never applied).
+  Approvals with no local row are adopted from the simulator: open ones (pending/approved) as `WITHDRAWN`, never
+  applied, because the context that justified them is gone; terminal ones as reported — `APPLIED` with the version
+  the config history attributes to that approval, `REJECTED`, `EXPIRED`, `LAPSED` — each with an audited
+  `recovery_reconcile` decision, all counted toward the approver's budget.
 * **Every applied change is verified 24 h later** (`post_apply_verification`: pickup and engagement before/after,
   guardrail KPI against the policy margin, alert on breach) — the audit trail always has a "what happened next".
 * **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 32 attacks — an apply-boundary crash matrix, HTTP
@@ -148,9 +154,12 @@ at two random seeds. The table is the simulator grader's output:
 * **Where we were harmful, and why.** {{HARM_EXPLAIN}}
 * **Decay.** The decaying welcome message (`W3`) was promoted on its early lift, then rolled back: its share fell
   to 0 within {{DECAY_DAYS}} days of the decay onset. That is slower than we'd like: with a 15 % holdout the
-  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. In the final
-  public_01 run W3 only won late (D4), and the decay test had not fired by the end: its share was still 0.85 on
-  days 5–7 (`reports/public_01_dev.md`). Late winners leave too little post-decay data before the run ends.
+  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. A winner
+  that wins late can run out of time: in an earlier public_01 run W3 won on D4 (after its decay began) and was not
+  rolled back by the end — the holdout showed −1.3 points over D5–7 (z −0.53), no evidence either way. We did not
+  lower the 1 % threshold (that brought back false rollbacks); instead every passing check is audited daily
+  (`decay_check`) with the smallest drop it could have detected, so a miss is explainable from the store. In the
+  final public_01 run W3 won on D2 and was rolled back at D6 18:00.
 * **Governance hygiene.** {{GOV_LINE}}
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
   promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost.

@@ -122,3 +122,31 @@ def tv_distance(a: dict[str, float], b: dict[str, float]) -> float:
     sa, sb = sum(a.values()) or 1.0, sum(b.values()) or 1.0
     keys = set(a) | set(b)
     return 0.5 * sum(abs(a.get(k, 0) / sa - b.get(k, 0) / sb) for k in keys)
+
+
+def fail_ucb(failures: int, n: int, conf: float = 0.95) -> float:
+    """Exact (Clopper-Pearson) one-sided upper confidence bound on a failure rate from `failures` in `n` trials:
+    the largest p with P(X <= failures | n, p) >= 1 - conf. Bisection on the binomial CDF (n is a few hundred)."""
+    if n <= 0:
+        return 1.0
+    if failures >= n:
+        return 1.0
+
+    def cdf(p):
+        return sum(math.comb(n, k) * p ** k * (1 - p) ** (n - k) for k in range(failures + 1))
+    lo, hi = failures / n, 1.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if cdf(mid) >= 1 - conf:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def validation_vetoes(failures: int, n: int, min_pass_rate: float, conf: float = 0.95) -> tuple[bool, float]:
+    """May a validation run overrule a production hallucination alarm? Only if it *demonstrates* safety: the upper
+    confidence bound on its failure rate is within the policy limit (1 - min_pass_rate). A small run with a failure or
+    two proves nothing either way, and then the production signal stands (benefit of the doubt to safety)."""
+    ucb = fail_ucb(failures, n, conf)
+    return ucb <= 1 - min_pass_rate, ucb

@@ -113,6 +113,14 @@ def test_harmful_challenger_dropped_before_horizon(db, eng):
     assert e.design["V1"] > e.design["V3"]                 # dropping only moves traffic back, keeps the shape
 
 
+def test_dropped_share_goes_to_the_incumbent_not_to_other_challengers(eng):
+    e = exp(n_plan=10_000)
+    e.design = {"V1": 0.6, "V2": 0.1333, "V3": 0.1333, "V4": 0.1334}
+    eng.plan_drop(e, ["V4"])
+    assert e.design["V2"] == pytest.approx(0.1333) and e.design["V3"] == pytest.approx(0.1333)   # sample rate kept
+    assert e.design["V1"] == pytest.approx(0.7334, abs=1e-4) and sum(e.design.values()) == pytest.approx(1.0)
+
+
 def test_harmful_challenger_dropped_even_while_others_underpowered(db, eng):
     arm(db, "V1", 1000, 500)
     arm(db, "V2", 1000, 400)

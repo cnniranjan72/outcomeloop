@@ -18,7 +18,7 @@ the simulator.
 | public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `105 min` |
 | public_03 ingest throughput | `~41,000` events/s |
 | public_03 controller seconds per simulated day (ingest + decide) | `42–53 s` |
-| public_03 peak controller memory | `1046 MB` |
+| public_03 peak controller memory | `361 MB` (was 1,046 MB; `reports/memory.md`) |
 | Unit tests | `199 (197 unit + 2 slow integration)` |
 | Crash-recovery run (kill / restart / verify) | `9 hard kills, 20 verification checks, 0 failed` |
 
@@ -999,7 +999,7 @@ Measured on `public_03_load` (12 workflows, about 650k dials/day, about 850k eve
 
 - ingest throughput: `~41,000` events/s
 - controller time per simulated day (ingest + decide): `42–53 s`. The SRE target is under 600 s.
-- peak memory: `1046 MB`
+- peak memory: `361 MB` (was 1,046 MB before the streaming-ingest fix; `reports/memory.md`)
 
 The report also gives per-tick p50/p95/max controller time, maximum ingest lag, DB size and the per-day table.
 
@@ -1010,7 +1010,7 @@ they stay exactly-once under replay — and decisions read them. Decide time fel
 simulated day for ~+15 % ingest time in an isolated measurement (15–27 s in the final load run, on a busier
 shared host: `reports/public_03.md`).
 
-**Measured scaling.** 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
+**Measured scaling.** 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`, `scripts/scaling.sh`): controller time per simulated day ~49 s → ~139 s (2.8× for 3× the events and workflows), peak memory 272 → 345 MB, 0 decision errors — linear; ≈ 460 s/day *projected* at 10× (under the 600 s target, modest headroom). The first limit is ingest CPU on one core (70 % of ingest time is reading, parsing and the per-event transform; SQLite under a third — `scripts/bench_ingest.py --phases`), so the 10× answer is sharding workflows across processes.
 
 What breaks first at 10× (about 6.5M dials/day), from those measurements:
 
