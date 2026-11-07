@@ -238,7 +238,7 @@ and `INSERT ... ON CONFLICT`. In production:
 ├── config/
 │   └── tenant_preferences.json # voluntary, stricter-than-policy tenant preferences (Kestrel: 11:00, 2/day)
 ├── src/outcomeloop/
-│   ├── __main__.py             # CLI: run | why | supervisor | status | audit | customer
+│   ├── __main__.py             # CLI: run | why | supervisor | status | audit | decision | customer | alerts
 │   ├── config.py               # Settings: every tunable constant + env loading
 │   ├── controller.py           # the loop, decide(), desired config, routing, proposals, incidents, metrics
 │   ├── ingest.py               # exactly-once chunk ingestion, feature join, inbox
@@ -1090,6 +1090,8 @@ python -m outcomeloop --db state/mine01.db status
 python -m outcomeloop --db state/mine01.db supervisor nw_renewal
 python -m outcomeloop --db state/mine01.db why nw_renewal --at "D3 14:00"
 python -m outcomeloop --db state/mine01.db audit --wf nw_renewal --kind proposal_submitted --limit 20
+python -m outcomeloop --db state/mine01.db audit --wf nw_renewal --kind "experiment_*"   # a prefix: one lifecycle
+python -m outcomeloop --db state/mine01.db decision 140                                  # one decision in full (ids from audit)
 python -m outcomeloop --db state/mine01.db customer nw_renewal:p0004567 --day 3
 ```
 

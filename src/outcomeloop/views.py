@@ -168,13 +168,73 @@ def status(db: DB) -> str:
     return "\n".join(out)
 
 
+def decision(db: DB, decision_id: int, evidence_lines: int = 60) -> str:
+    """One decision, fully: what, when, by whom, why (reasoning), on what evidence, every object it links to
+    (proposal + approval, config version, experiment, incident), and the decisions just before and after it on the
+    same workflow. Built for the live review question "explain this decision from your audit store"."""
+    r = db.q1("SELECT d.decision_id, d.minute, d.wf, w.workflow_id, d.kind, d.actor, d.summary, d.reasoning, d.evidence,"
+              " d.proposal_id, d.approval_id, d.config_version, d.experiment_id, d.incident_id FROM decisions d LEFT JOIN"
+              " workflows w ON w.wf=d.wf WHERE d.decision_id=?", (decision_id,))
+    if not r:
+        return f"no decision #{decision_id}"
+    did, m, wf, wid, kind, actor, summ, reason, ev, pid, aid, ver, eid, iid = r
+    out = [f"# decision #{did} — {kind} · {minute_to_label(m)} · {wid or 'controller'} · by {actor}", "",
+           f"What:  {summ}"]
+    if reason:
+        out.append(f"Why:   {reason}")
+    links = []
+    if pid:
+        p = db.q1("SELECT route, kind, state, base_version, applied_version, approval_id, created_minute, notes FROM"
+                  " proposals WHERE proposal_id=?", (pid,))
+        if p:
+            links.append(f"proposal {pid}: {p[0]} route, {p[1]}, state {p[2]}, base v{p[3]}"
+                         + (f", applied as v{p[4]}" if p[4] is not None else "")
+                         + (f", approval {p[5]}" if p[5] else "") + f", created {minute_to_label(p[6])}"
+                         + (f" — {p[7]}" if p[7] else ""))
+    if ver is not None and wf is not None:
+        v = db.q1("SELECT actor, minute, changed_dims FROM config_versions WHERE wf=? AND version=?", (wf, ver))
+        if v:
+            links.append(f"config v{ver}: by {v[0]} at {minute_to_label(v[1])}, changed {v[2]}")
+    if eid:
+        e = db.q1("SELECT status, data FROM experiments WHERE experiment_id=?", (eid,))
+        if e:
+            d = json.loads(e[1])
+            links.append(f"experiment {eid}: {d.get('dim')} {d.get('arms')}, status {e[0]}, winner {d.get('winner')}, "
+                         f"alpha spent {d.get('alpha_spent', 0):.4f}")
+    if iid:
+        i = db.q1("SELECT type, state, opened_minute, closed_minute FROM incidents WHERE incident_id=?", (iid,))
+        if i:
+            links.append(f"incident {iid}: {i[0]}, {i[1]}, opened {minute_to_label(i[2])}"
+                         + (f", closed {minute_to_label(i[3])}" if i[3] is not None else ""))
+    if aid and not pid:
+        links.append(f"approval {aid}")
+    if links:
+        out += ["", "Linked:"] + [f"  {x}" for x in links]
+    if ev:
+        try:
+            pretty = json.dumps(json.loads(ev), indent=2, default=str).split("\n")
+        except ValueError:
+            pretty = [ev]
+        out += ["", "Evidence:"] + ["  " + x for x in pretty[:evidence_lines]]
+        if len(pretty) > evidence_lines:
+            out.append(f"  … {len(pretty) - evidence_lines} more lines (python -m outcomeloop decision {did} --full)")
+    if wf is not None:
+        before = db.q("SELECT decision_id, minute, kind, summary FROM decisions WHERE wf=? AND decision_id<? AND"
+                      " kind NOT IN ('hold','cohort_check') ORDER BY decision_id DESC LIMIT 5", (wf, did))
+        after = db.q("SELECT decision_id, minute, kind, summary FROM decisions WHERE wf=? AND decision_id>? AND"
+                     " kind NOT IN ('hold','cohort_check') ORDER BY decision_id LIMIT 8", (wf, did))
+        fmt = lambda x: f"  #{x[0]:<5} {minute_to_label(x[1])}  {x[2]:24s} {_fmt_ev(x[3], 110)}"
+        out += ["", "Before:"] + [fmt(x) for x in reversed(before)] + ["", "After:"] + [fmt(x) for x in after]
+    return "\n".join(out)
+
+
 def _n(v):
     """Metric for display: whole numbers without a trailing .0, others to one decimal; missing as '-'."""
     return "-" if v is None else (f"{v:,.0f}" if abs(v - round(v)) < 0.05 else f"{v:,.1f}")
 
 
 def audit(db: DB, workflow_id: str | None, kind: str | None, limit: int) -> str:
-    sql = "SELECT d.minute, w.workflow_id, d.kind, d.actor, d.summary, d.proposal_id FROM decisions d LEFT JOIN" \
+    sql = "SELECT d.decision_id, d.minute, w.workflow_id, d.kind, d.actor, d.summary, d.proposal_id FROM decisions d LEFT JOIN" \
           " workflows w ON w.wf=d.wf WHERE 1=1"
     args = []
     if workflow_id:
@@ -186,8 +246,8 @@ def audit(db: DB, workflow_id: str | None, kind: str | None, limit: int) -> str:
     sql += " ORDER BY d.decision_id DESC LIMIT ?"
     args.append(limit)
     rows = db.q(sql, args)
-    return "\n".join(f"{minute_to_label(m)}  {w or '-':12s} {k:24s} {a:10s} {_fmt_ev(s, 130)}"
-                     for m, w, k, a, s, p in reversed(rows))
+    return "\n".join(f"#{i:<5} {minute_to_label(m)}  {w or '-':12s} {k:24s} {a:10s} {_fmt_ev(s, 130)}"
+                     for i, m, w, k, a, s, p in reversed(rows))
 
 
 def customer(db: DB, person_id: str, day: int | None) -> str:
@@ -304,10 +364,12 @@ def serve(db_path: str, port: int):
                     body = supervisor(db, parts[1])
                 elif len(parts) == 2 and parts[0] == "why":
                     body = why(db, parts[1], q.get("at", ["D0 00:00"])[0])
+                elif len(parts) == 2 and parts[0] == "decision" and parts[1].isdigit():
+                    body = decision(db, int(parts[1]), 10_000 if "full" in q else 60)
                 elif len(parts) == 2 and parts[0] == "customer":
                     body = customer(db, parts[1], int(q["day"][0]) if "day" in q else None)
                 else:
-                    body, code = "routes: /status /alerts /supervisor/<wf> /why/<wf>?at=D3%2014:00 /customer/<person>", 404
+                    body, code = "routes: /status /alerts /supervisor/<wf> /why/<wf>?at=D3%2014:00 /decision/<id> /customer/<person>", 404
                     self._send(code, body)
                     return
                 self._send(200, body)

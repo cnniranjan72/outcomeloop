@@ -75,3 +75,19 @@ def test_customer_view_labels_a_supervisor_edit_as_outside_governance(db):
     person = db.q1("SELECT person FROM calls WHERE wf=5")[0]
     out = views.customer(db, f"wfS:p{person}", None)
     assert "by supervisor (direct edit, outside governance)" in out and "None" not in out
+
+
+def test_decision_view_shows_reasoning_evidence_links_and_neighbours(db):
+    db.x("INSERT INTO workflows (wf, workflow_id) VALUES (7, 'wfD')")
+    db.x("INSERT INTO incidents VALUES ('inc-1', 7, 'hallucination', 'closed', 600, 900, '{}')")
+    db.decide(500, 7, "supervisor_edit", "supervisor changed prompt")
+    db.decide(600, 7, "incident_opened", "hallucination incident on prompt P2", evidence={"trigger": "validation_probe",
+              "failure_ucb95": 0.09}, incident_id="inc-1", reasoning="population evidence")
+    db.decide(700, 7, "incident_fix_selected", "fix = P1")
+    did = db.q1("SELECT decision_id FROM decisions WHERE kind='incident_opened'")[0]
+    out = views.decision(db, did)
+    assert "incident_opened" in out and "Why:   population evidence" in out
+    assert '"failure_ucb95": 0.09' in out and "incident inc-1: hallucination, closed" in out
+    assert "supervisor_edit" in out.split("After:")[0] and "incident_fix_selected" in out.split("After:")[1]
+    assert views.decision(db, 99999) == "no decision #99999"
+    assert f"#{did}" in views.audit(db, "wfD", "incident_*", 10)

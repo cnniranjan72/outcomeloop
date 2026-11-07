@@ -40,6 +40,9 @@ def main(argv=None):
     au.add_argument("--wf")
     au.add_argument("--kind")
     au.add_argument("--limit", type=int, default=50)
+    de = sub.add_parser("decision", help="one decision in full: why, evidence, links, before/after")
+    de.add_argument("decision_id", type=int)
+    de.add_argument("--full", action="store_true", help="print the whole evidence JSON")
     cu = sub.add_parser("customer")
     cu.add_argument("person_id")
     cu.add_argument("--day", type=int)
@@ -75,6 +78,8 @@ def main(argv=None):
         views.serve(a.db, a.port)
     elif a.cmd == "audit":
         print(views.audit(db, a.wf, a.kind, a.limit))
+    elif a.cmd == "decision":
+        print(views.decision(db, a.decision_id, 10_000 if a.full else 60))
     elif a.cmd == "customer":
         print(views.customer(db, a.person_id, a.day))
 
