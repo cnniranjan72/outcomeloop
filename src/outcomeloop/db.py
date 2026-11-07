@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS calls (
   conn INTEGER, eng INTEGER, flag INTEGER,
   lang INTEGER, tier INTEGER, age INTEGER, val INTEGER,
   PRIMARY KEY (wf, minute, event_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS did_hour (
+  wf INTEGER, hb INTEGER, did INTEGER, dials INTEGER, conn INTEGER, PRIMARY KEY (wf, hb, did)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS arm_hour (
+  wf INTEGER, hb INTEGER, cfg_ver INTEGER, wm INTEGER, voice INTEGER, lang INTEGER, tier INTEGER, age INTEGER,
+  val INTEGER, dials INTEGER, conn INTEGER, eng INTEGER,
+  PRIMARY KEY (wf, hb, cfg_ver, wm, voice, lang, tier, age, val)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS config_versions (
   wf INTEGER, version INTEGER, actor TEXT, minute INTEGER, changed_dims TEXT, proposal_id TEXT, approval_id TEXT,
   config TEXT, event_id INTEGER, PRIMARY KEY (wf, version));

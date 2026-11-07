@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from outcomeloop.db import DB
+from outcomeloop.ingest import apply_rollups
 
 _EID = [0]
 
@@ -33,6 +34,7 @@ def add_calls(db: DB, wf: int, n: int, conn: int, eng: int = 0, *, minute: int =
                      k, g, f, codes[5], codes[6], codes[7], codes[8]))
     with db.tx():
         db.conn.executemany("INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        apply_rollups(db, rows)   # the same rollup code ingestion uses
 
 
 def count(db: DB, table: str) -> int:

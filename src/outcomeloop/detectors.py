@@ -22,9 +22,9 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
     windows = {"fast": s.did_fast_window_minutes, "slow": s.did_slow_window_minutes,
                "long": s.did_long_window_minutes}
     stats = {}
-    def window(lo):
-        rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
-                    (wf, lo, now))
+    def window(lo):   # hourly rollup (hour resolution): a few rows per workflow-hour instead of every call
+        rows = db.q("SELECT did, SUM(dials), SUM(conn) FROM did_hour WHERE wf=? AND hb>=? AND hb<? GROUP BY did",
+                    (wf, lo // 60, -(-now // 60)))
         return {db.decode("caller_id", d): (n, c) for d, n, c in rows}
     for name, w in windows.items():
         stats[name] = window(now - w)
@@ -80,8 +80,8 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
 
 def did_own_past(db: DB, wf: int, now: int, s: Settings) -> dict[str, tuple[int, int]]:
     """Per-number dials/connected over the week before the slow window (the number's own baseline)."""
-    rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
-                (wf, now - 7 * 1440 - s.did_slow_window_minutes, now - s.did_slow_window_minutes))
+    rows = db.q("SELECT did, SUM(dials), SUM(conn) FROM did_hour WHERE wf=? AND hb>=? AND hb<? GROUP BY did",
+                (wf, (now - 7 * 1440 - s.did_slow_window_minutes) // 60, (now - s.did_slow_window_minutes) // 60))
     return {db.decode("caller_id", d): (n, c) for d, n, c in rows}
 
 

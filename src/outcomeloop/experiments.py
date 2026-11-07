@@ -93,9 +93,12 @@ class ExperimentEngine:
         col = "wm" if e.dim == "welcome_message" else "voice"
         case = membership_sql(db, cohorts or [])
         vs = e.versions or [-1]
-        sql = (f"SELECT {case} AS c, {col}, COUNT(*), SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=?"
-               f" AND minute<? AND cfg_ver IN ({','.join('?' * len(vs))}) GROUP BY 1, 2")
-        rows = db.q(sql, (e.wf, since if since is not None else (e.start_minute if e.start_minute is not None else 0), until or 10 ** 9, *vs))
+        lo = since if since is not None else (e.start_minute if e.start_minute is not None else 0)
+        hi = until if until is not None else 10 ** 9
+        # hourly rollup (hour resolution; the version filter keeps pre-experiment calls out)
+        sql = (f"SELECT {case} AS c, {col}, SUM(dials), SUM(conn), SUM(eng) FROM arm_hour WHERE wf=? AND hb>=?"
+               f" AND hb<? AND cfg_ver IN ({','.join('?' * len(vs))}) GROUP BY 1, 2")
+        rows = db.q(sql, (e.wf, lo // 60, -(-hi // 60), *vs))
         out: dict[str, dict[str, tuple]] = {"ALL": {}}
         for c, o, n, k, g in rows:
             opt = db.decode(e.dim, o)
@@ -111,9 +114,9 @@ class ExperimentEngine:
         next_campaign_only) mixes populations and can reverse the sign (Simpson). Returns (diff, se, n_inc, n_win)."""
         col = "wm" if e.dim == "welcome_message" else "voice"
         vs = e.versions or [-1]
-        rows = self.db.q(f"SELECT cfg_ver, {col}, SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<?"
-                         f" AND cfg_ver IN ({','.join('?' * len(vs))}) AND conn=1 GROUP BY 1, 2",
-                         (e.wf, since, until, *vs))
+        rows = self.db.q(f"SELECT cfg_ver, {col}, SUM(conn), SUM(eng) FROM arm_hour WHERE wf=? AND hb>=? AND hb<?"
+                         f" AND cfg_ver IN ({','.join('?' * len(vs))}) GROUP BY 1, 2",
+                         (e.wf, since // 60, -(-until // 60), *vs))
         by: dict[int, dict[str, tuple[int, int]]] = {}
         for v, o, k, g in rows:
             by.setdefault(v, {})[self.db.decode(e.dim, o)] = (k, g)

@@ -30,6 +30,24 @@ def _suffix_int(s: str, marker: str) -> int:
     return int(s[s.rindex(marker) + len(marker):])
 
 
+def apply_rollups(db: DB, calls: list[tuple]) -> None:
+    """Refresh the hourly rollups (did_hour, arm_hour) for every workflow-hour these call rows touch, recomputed from
+    the `calls` table itself. A rollup is therefore a pure function of the stored rows: replaying a chunk (even with
+    its checkpoint gone) cannot double-count, by construction. Each refresh reads one hour of one workflow through
+    the (wf, minute) primary key. The single implementation used by ingestion (inside the chunk's transaction) and
+    by tests."""
+    touched = {(row[0], row[1] // 60) for row in calls}
+    for wf, hb in sorted(touched):
+        lo, hi = hb * 60, hb * 60 + 60
+        db.x("DELETE FROM did_hour WHERE wf=? AND hb=?", (wf, hb))
+        db.x("DELETE FROM arm_hour WHERE wf=? AND hb=?", (wf, hb))
+        db.x("INSERT INTO did_hour SELECT wf, ?, did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=?"
+             " AND minute<? GROUP BY did", (hb, wf, lo, hi))
+        db.x("INSERT INTO arm_hour SELECT wf, ?, cfg_ver, wm, voice, lang, tier, age, val, COUNT(*), SUM(conn),"
+             " SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY cfg_ver, wm, voice, lang, tier,"
+             " age, val", (hb, wf, lo, hi))
+
+
 class FeatureStore:
     """person index -> packed features, per workflow. Person ids are dense per workflow, so numpy arrays."""
 
@@ -68,8 +86,20 @@ class Ingestor:
         db.x(INBOX_SQL)
         db.x("CREATE INDEX IF NOT EXISTS inbox_pending ON inbox (wf, event_id) WHERE done=0")
         self.features = FeatureStore(db)
+        self._backfill_rollups()
         self.events_total = 0
         self.seconds_total = 0.0
+
+    def _backfill_rollups(self):
+        """A store created before the rollups existed (or restored from a backup) gets them rebuilt from the call
+        rows once, so an upgraded controller restarting on an old DB stays consistent."""
+        db = self.db
+        if db.q1("SELECT 1 FROM calls LIMIT 1") and not db.q1("SELECT 1 FROM did_hour LIMIT 1"):
+            with db.tx():
+                db.x("INSERT INTO did_hour SELECT wf, (minute - ((minute % 60) + 60) % 60) / 60, did, COUNT(*),"
+                     " SUM(conn) FROM calls GROUP BY 1, 2, 3")
+                db.x("INSERT INTO arm_hour SELECT wf, (minute - ((minute % 60) + 60) % 60) / 60, cfg_ver, wm, voice,"
+                     " lang, tier, age, val, COUNT(*), SUM(conn), SUM(eng) FROM calls GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9")
 
     def last_chunk(self) -> int:
         r = self.db.q1("SELECT MAX(chunk) FROM chunks")
@@ -154,6 +184,8 @@ class Ingestor:
                 db.conn.executemany("INSERT OR IGNORE INTO campaigns VALUES (?,?,?,?,?)", camps)
             if calls:
                 db.conn.executemany("INSERT OR IGNORE INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", calls)
+                # exactly-once by the same argument as the rows: the chunk's transaction commits with its checkpoint
+                apply_rollups(db, calls)
             if concl:
                 db.conn.executemany("UPDATE leads SET concluded_minute=? WHERE wf=? AND lead=? AND concluded_minute IS NULL",
                                     concl)

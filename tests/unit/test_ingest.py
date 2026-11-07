@@ -137,3 +137,35 @@ def test_restart_resumes_from_checkpoint(db):
     assert sim.calls["iter_chunk"] == n_iter + 1          # history chunk not re-read
     # feature store rebuilt from the DB: the returning person's new-lead call still gets features
     assert db.q1("SELECT lang FROM calls WHERE minute=560")[0] == db.code("lang", "ta")
+
+
+def _rollups(db):
+    return (db.q("SELECT * FROM did_hour ORDER BY 1, 2, 3"), db.q("SELECT * FROM arm_hour ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9"))
+
+
+def test_rollups_equal_raw_aggregation_and_survive_replay(db):
+    sim, f = FakeSim(), EventFactory()
+    _world(sim, f)
+    ing = Ingestor(db, sim)
+    ing.ingest_all()
+    did, arm = _rollups(db)
+    raw_did = db.q("SELECT wf, (minute - ((minute % 60) + 60) % 60) / 60, did, COUNT(*), SUM(conn) FROM calls"
+                   " GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
+    assert did == raw_did and sum(r[9] for r in arm) == count(db, "calls")
+    # replay with the checkpoint gone: rows are kept by INSERT OR IGNORE and rollups are recomputed, not added
+    with db.tx():
+        db.x("DELETE FROM chunks")
+    ing.ingest_all()
+    assert _rollups(db) == (did, arm)
+
+
+def test_backfill_rebuilds_the_same_rollups(db):
+    sim, f = FakeSim(), EventFactory()
+    _world(sim, f)
+    Ingestor(db, sim).ingest_all()
+    before = _rollups(db)
+    with db.tx():
+        db.x("DELETE FROM did_hour")
+        db.x("DELETE FROM arm_hour")
+    Ingestor(db, sim)                      # startup on an old store: backfill from the call rows
+    assert _rollups(db) == before
