@@ -13,7 +13,9 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
     Caller ID is randomised per dial, so within a window every DID sees the same hour and person mix in
     expectation; comparing a DID's pickup with the pooled pickup of the other DIDs isolates the number itself.
     Windows: fast (6h, catches a sudden spam flag) and slow (24h, gradual decline) decide "degraded" (ratio < 0.85,
-    z < -3.5, >= 300 dials); "healthy" may also use a long 72h window so low-volume probes can complete.
+    z < -3.5, >= 300 dials, and — when the number has a week of its own history — a drop of > 15% against that
+    history with z < -3, so steady volume fatigue next to a fresh number is not mistaken for a flag); "healthy"
+    may also use a long 72h window so low-volume probes can complete.
     """
     out: dict[str, dict] = {}
     windows = {"fast": s.did_fast_window_minutes, "slow": s.did_slow_window_minutes,
@@ -25,6 +27,11 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
         return {db.decode("caller_id", d): (n, c) for d, n, c in rows}
     for name, w in windows.items():
         stats[name] = window(now - w)
+    # each number's own recent past (the week before the slow window): a spam flag is a drop against it,
+    # while volume fatigue is steady — the relative test alone cannot tell the two apart
+    rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
+                (wf, now - 7 * 1440 - s.did_slow_window_minutes, now - s.did_slow_window_minutes))
+    own_past = {db.decode("caller_id", d): (n, c) for d, n, c in rows}
     since = since or {}
     for opt in options:
         rec = {"state": "unknown", "windows": {}}
@@ -50,7 +57,14 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
             rec["windows"][name] = {"dials": n, "connected": c, "pickup": round(c / n, 4),
                                     "others_pickup": round(oc / on, 4), "ratio": round(ratio, 3), "z": round(cmp_.z, 2)}
             rec["windows"][name]["ratio_lcb"] = round(ratio - se_ratio, 3)
-            if name != "long" and n >= s.did_min_dials and ratio < s.did_degraded_ratio and cmp_.z < -s.did_degraded_z:
+            pn, pc = own_past.get(opt, (0, 0))
+            self_cmp = compare(Prop(pc, pn), Prop(c, n)) if pn >= s.did_min_dials else None
+            if self_cmp is not None:
+                rec["windows"][name]["own_past_pickup"] = round(pc / pn, 4)
+                rec["windows"][name]["z_vs_own_past"] = round(self_cmp.z, 2)
+            # a number in rotation with its own history must also have dropped against that history
+            dropped = self_cmp is None or (self_cmp.rel < -0.15 and self_cmp.z < -3.0)
+            if name != "long" and n >= s.did_min_dials and ratio < s.did_degraded_ratio and cmp_.z < -s.did_degraded_z                     and dropped:
                 degraded = True
             # a number on probe only has to show it is bad to stay out (low-risk action): lower bar
             if name != "long" and probing and opt in probing and n >= s.did_healthy_min_dials \
