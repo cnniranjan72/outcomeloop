@@ -1,8 +1,8 @@
-"""The control loop: ingest → handle events → governance → decide → advance.
+"""The control loop: ingest â†’ handle events â†’ governance â†’ decide â†’ advance.
 
 Planning model: every decision tick we compute the *desired* config for a workflow from our own state
 (cohort set, schedule, caller-ID health, experiment plans, incident fixes) layered on top of the *current live*
-config. The proposal is simply current → desired. Re-basing after a supervisor edit or a stale/expired
+config. The proposal is simply current â†’ desired. Re-basing after a supervisor edit or a stale/expired
 proposal is therefore automatic: the next plan starts from the new live config, and dimensions a supervisor
 touched recently are locked so we never overwrite them silently.
 """
@@ -44,7 +44,7 @@ def _norm(d: dict) -> dict:
 
 
 def changed_dims(old: dict, new: dict) -> list[str]:
-    """Same semantics as the governance boundary uses (docs/SIMULATOR.md §4.2)."""
+    """Same semantics as the governance boundary uses (docs/SIMULATOR.md Â§4.2)."""
     ch = set()
     if old.get("cohorts", []) != new.get("cohorts", []):
         ch.add("cohorts")
@@ -77,6 +77,7 @@ class Controller:
         self.wf_by_id: dict[str, int] = {}
         self.now = 0
         self.decisions_this_hour = 0
+        self.urgent: set[int] = set()   # workflows to decide on at the next tick regardless of cadence
         self.t_start = time.time()
         self.day_wall: dict[int, float] = {}
 
@@ -114,7 +115,7 @@ class Controller:
                 return self.sim.state()
             except Exception:
                 if i % 10 == 0:
-                    log.info("waiting for simulator at %s …", self.s.sim_url)
+                    log.info("waiting for simulator at %s â€¦", self.s.sim_url)
                 time.sleep(1)
         raise SystemExit(f"simulator at {self.s.sim_url} not reachable")
 
@@ -158,8 +159,11 @@ class Controller:
             day = self.now // 1440
             self.day_wall.setdefault(day, time.time())
             self.governance_tick()
-            if self.now % self.s.decision_every_minutes == 0:
-                for wf in sorted(self.specs):
+            hourly = self.now % self.s.decision_every_minutes == 0
+            due = sorted(self.specs) if hourly else sorted(self.urgent)
+            self.urgent = set()
+            if due:
+                for wf in due:
                     try:
                         self.decide(wf)
                     except (ApiError, Uncertain) as e:
@@ -226,11 +230,12 @@ class Controller:
                 locks[d] = minute + int(self.s.supervisor_lock_hours * 60)
             self.db.kv_set(f"locks:{wf}", locks)
             self.db.decide(minute, wf, "supervisor_edit", f"supervisor changed {dims}; locked for "
-                           f"{self.s.supervisor_lock_hours:.0f}h — we will not propose changes to these dims",
+                           f"{self.s.supervisor_lock_hours:.0f}h â€” we will not propose changes to these dims",
                            reasoning="supervisor edits are authoritative and bypass governance; we never overwrite"
                                      " them silently. Pending proposals on an older base will be re-planned.",
                            config_version=ver, actor="controller")
             if "prompt_version" in dims:
+                self.urgent.add(wf)
                 inc = self.db.kv_get(f"prompt_probe:{wf}", [])
                 inc.append({"version": ver, "minute": minute, "prompt": cur["config"]["prompt_version"]})
                 self.db.kv_set(f"prompt_probe:{wf}", inc)
@@ -239,6 +244,7 @@ class Controller:
             tr = self.exp.on_config(e, cur["config"], ver, actor, dims, minute)
             if tr:
                 e.save(self.db, minute)
+            if tr and tr != "versions":
                 self.db.decide(minute, wf, f"experiment_{tr}", f"{e.dim} experiment {tr} (v{ver})",
                                evidence={"plan": e.plan, "versions": e.versions, "result": e.result},
                                experiment_id=e.experiment_id, config_version=ver)
@@ -257,7 +263,7 @@ class Controller:
 
     def _on_gov(self, kind: str, wf: int, pid: str, info: dict):
         msg = {"approved": "approved by client approver", "rejected": "rejected", "expired": "expired unanswered",
-               "lapsed": "approval lapsed before apply", "stale": "base version changed — will re-plan on new base",
+               "lapsed": "approval lapsed before apply", "stale": "base version changed â€” will re-plan on new base",
                "applied": "applied"}.get(kind, kind)
         self.db.decide(self.now, wf, f"proposal_{kind}", f"{pid}: {msg}", evidence=info, proposal_id=pid,
                        approval_id=info.get("approval_id"), config_version=info.get("version"),
@@ -321,7 +327,7 @@ class Controller:
                       f" cohorts by {ev.get('chosen')} {[c.cohort_id for c in cohorts]}, schedule dry-run pickup lift"
                       f" {dry.get('rel_lift', 0):+.1%}, QA flag reference rate {ref:.4f}",
                       reasoning="cohort feature = the one whose values have the most different hour-of-day pickup"
-                                " profiles (likelihood-ratio test p<0.001, largest G²/df); groups below 10% of dials are"
+                                " profiles (likelihood-ratio test p<0.001, largest GÂ²/df); groups below 10% of dials are"
                                 " merged so no cohort is too small to measure",
                       evidence={"cohorts": ev, "schedule_dry_run": dry, "halluc_baseline": base})
 
@@ -334,10 +340,20 @@ class Controller:
         for d, h in health.items():
             prev = mem.get(d, {}).get("state", "unknown")
             if h["state"] == "degraded" and prev != "degraded":
-                mem[d] = {"state": "degraded", "since": now}
+                mem[d] = {"state": "degraded", "since": now, "rest": mem.get(d, {}).get("rest", 1440)}
                 changed.append((d, prev, "degraded", h))
-            elif h["state"] == "healthy" and prev not in ("healthy", "degraded"):
-                mem[d] = {"state": "healthy", "since": now}
+            elif prev == "degraded":
+                # a resting number (0 share) produces no data; after the rest period re-probe it, because number
+                # reputation recovers when volume drops. Rest doubles each time it degrades again.
+                rest = mem[d].get("rest", 1440)
+                if now - mem[d]["since"] >= rest:
+                    mem[d] = {"state": "probe", "since": now, "rest": rest * 2}
+                    changed.append((d, "degraded", "probe", h))
+            elif prev == "probe" and h["state"] != "healthy" and now - mem[d]["since"] >= self.s.did_probe_hours * 60:
+                mem[d] = {"state": "degraded", "since": now, "rest": mem[d].get("rest", 1440)}
+                changed.append((d, "probe", "degraded", h))
+            elif h["state"] == "healthy" and prev != "healthy":
+                mem[d] = {"state": "healthy", "since": now, "rest": mem.get(d, {}).get("rest", 1440)}
                 changed.append((d, prev, "healthy", h))
         with self.db.tx():
             self.db.kv_set(f"did:{wf}", mem)
@@ -362,9 +378,9 @@ class Controller:
             unknown = [d for d in unknown if d not in healthy]
         if not healthy:
             return cur
-        probe = self.s.did_probe_share
-        tgt = {d: probe for d in unknown}
-        rest = 1 - probe * len(unknown)
+        tgt = {d: (self.s.did_reprobe_share if mem.get(d, {}).get("state") == "probe" else self.s.did_probe_share)
+               for d in unknown}
+        rest = 1 - sum(tgt.values())
         for d in healthy:
             tgt[d] = rest / len(healthy)
         return {d: round(w, 4) for d, w in tgt.items() if w > 0}
@@ -394,7 +410,8 @@ class Controller:
                       (wf,))[0] or (now - 1440)
         sp = halluc_spike(db, wf, prompt, max(since, now - 1440), now, ref, self.s)
         ctx["evidence"]["halluc"] = sp
-        if sp["fired"] and not open_inc:
+        quiet = db.kv_get(f"halluc_quiet:{wf}", {})
+        if sp["fired"] and not open_inc and quiet.get(prompt, -1) < now:
             self._open_incident(wf, prompt, now, {"trigger": "flag_rate", "detector": sp})
             open_inc = db.q1("SELECT incident_id, state, data FROM incidents WHERE wf=? AND state!='closed'"
                              " ORDER BY opened_minute DESC", (wf,))
@@ -403,10 +420,46 @@ class Controller:
         iid, state, data = open_inc
         d = json.loads(data)
         if state == "open":
+            if d.get("trigger") == "flag_rate" and "confirmation" not in d:
+                # second, independent evidence source before touching a customer-facing script: QA flags are a
+                # noisy detector, a validation run measures the prompt itself (3 credits)
+                thr = spec["governance"].get("min_validation_pass_rate", 0.97)
+                run = self._validate(wf, spec, d["bad_prompt"], purpose=f"confirm {iid}")
+                d["confirmation"] = run
+                if run and run["pass_rate"] >= thr:
+                    with db.tx():
+                        db.x("UPDATE incidents SET state='closed', closed_minute=?, data=? WHERE incident_id=?",
+                             (now, dumps(d), iid))
+                        quiet[d["bad_prompt"]] = now + 1440
+                        db.kv_set(f"halluc_quiet:{wf}", quiet)
+                        db.decide(now, wf, "incident_not_confirmed",
+                                  f"{iid}: QA flag spike not confirmed — {d['bad_prompt']} passes validation"
+                                  f" {run['pass_rate']:.3f} >= {thr}; no prompt change, watching for 24h",
+                                  evidence=d, incident_id=iid,
+                                  reasoning="the flag detector has false positives; acting needs both signals")
+                    return
+                with db.tx():
+                    db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
             self._find_fix(wf, spec, iid, d, prompt, now)
+            r = db.q1("SELECT state, data FROM incidents WHERE incident_id=?", (iid,))
+            if r[0] == "fix_ready":
+                ctx["prompt_fix"] = (iid, json.loads(r[1]))
+                ctx["emergency"] = True
+                ctx["kinds"].append("halluc_incident")
         elif state == "verifying" and now - d.get("applied_minute", now) >= 240:
             v = halluc_spike(db, wf, prompt, d["applied_minute"], now, ref, self.s)
-            ok = not v["fired"] and v["connected"] >= 100
+            eng = self._engagement_check(wf, d, prompt, now)
+            if eng.get("harmed"):
+                with db.tx():
+                    d.setdefault("tried", {}).setdefault(prompt, {})["engagement_harm"] = eng
+                    d["verification_failed"] = eng
+                    db.x("UPDATE incidents SET state='open', data=? WHERE incident_id=?", (dumps(d), iid))
+                    db.decide(now, wf, "incident_fix_harmful", f"{iid}: fix {prompt} is safe but engagement fell"
+                              f" {eng['rel']:+.1%} (z {eng['z']}) — trying the next candidate", evidence=eng,
+                              incident_id=iid, reasoning="validation measures safety only; a fix nobody stays on the"
+                                                         " call for is not a fix")
+                return
+            ok = not v["fired"] and v["connected"] >= 100 and eng.get("checked", False)
             if ok or now - d["applied_minute"] > 1440:
                 with db.tx():
                     d["verification"] = v
@@ -430,14 +483,30 @@ class Controller:
             if st and st[0] in ("REJECTED", "EXPIRED", "LAPSED", "STALE", "SUBMIT_FAILED"):
                 with db.tx():
                     db.x("UPDATE incidents SET state='fix_ready' WHERE incident_id=?", (iid,))
-                    db.decide(now, wf, "incident_repropose", f"{iid}: fix proposal {pid} {st[0]} — re-proposing",
+                    db.decide(now, wf, "incident_repropose", f"{iid}: fix proposal {pid} {st[0]} â€” re-proposing",
                               incident_id=iid, proposal_id=pid)
+
+    def _engagement_check(self, wf, d, prompt, now) -> dict:
+        """Engagement on the fix prompt since it went live vs the 7 days before the incident opened."""
+        from .stats import Prop, compare
+        db = self.db
+        pc = db.code("prompt_version", prompt)
+        a = db.q1("SELECT SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<? AND conn=1 AND prompt!=?",
+                  (wf, d.get("opened", now) - 7 * 1440, d.get("opened", now), db.code("prompt_version", d["bad_prompt"])))
+        b = db.q1("SELECT SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<? AND conn=1 AND prompt=?",
+                  (wf, d["applied_minute"], now, pc))
+        if not a[0] or not b[0] or b[0] < 300:
+            return {"checked": False, "connected_after": b[0] or 0}
+        c = compare(Prop(a[1], a[0]), Prop(b[1], b[0]))
+        return {"checked": True, "before": round(a[1] / a[0], 4), "after": round(b[1] / b[0], 4), "rel": round(c.rel, 4),
+                "z": round(c.z, 2), "harmed": c.rel < -0.05 and c.z < -2.0}
 
     def _open_incident(self, wf, prompt, now, evidence):
         iid = f"inc-{self.specs[wf]['workflow_id']}-{now}"
         with self.db.tx():
             self.db.x("INSERT OR IGNORE INTO incidents VALUES (?,?,?,?,?,?,?)",
-                      (iid, wf, "hallucination", "open", now, None, dumps({"bad_prompt": prompt, **evidence})))
+                      (iid, wf, "hallucination", "open", now, None, dumps({"bad_prompt": prompt, "opened": now,
+                                                                          **evidence})))
             self.db.decide(now, wf, "incident_opened", f"hallucination incident on prompt {prompt}",
                            evidence=evidence, incident_id=iid,
                            reasoning="population evidence (validation run of n synthetic calls, or QA flag rate on"
@@ -471,7 +540,7 @@ class Controller:
         with self.db.tx():
             self.db.x("UPDATE credits_ledger SET state='done', response=? WHERE id=?", (dumps(run), lid))
             self.db.decide(self.now, wf, "validation_run", f"validated {prompt}: pass_rate {run['pass_rate']:.3f}"
-                           f" (n={n}, {cost} credits) — {purpose}", evidence=run)
+                           f" (n={n}, {cost} credits) â€” {purpose}", evidence=run)
         return run
 
     def _find_fix(self, wf, spec, iid, d, bad_prompt, now):
@@ -486,6 +555,8 @@ class Controller:
                        key=lambda p: (-(obs[p]["engagement"] or 0), p))
         tried = d.setdefault("tried", {})
         cands = [(p, "known_good") for p in known if p not in tried]
+        if not cands and d.get("llm_called"):
+            cands = [(x["prompt_version"], "llm") for x in d.get("llm_suggestions", []) if x["prompt_version"] not in tried]
         if not cands and not d.get("llm_called"):
             cost = 3
             if self._credits_ok(cost, incident=True):
@@ -534,15 +605,19 @@ class Controller:
         margin = list(spec["objective"]["guardrail"].values())[0] if spec["objective"].get("guardrail") else 0.02
         look_hour = max(spec["governance"]["approver_hours"][0],
                         self.s.tenant_pref(spec["tenant_id"]).get("not_before_hour", 0))
-        black = db.kv_get(f"blacklist:{wf}", {})
         for dim in EXP_DIMS:
+            black = db.kv_get(f"blacklist:{wf}", {})
             e = active.get(dim)
             if e is None:
                 if dim in ctx["locks"] or len(spec["options"][dim]) < 2 or now < 0:
                     continue
                 last = db.q1("SELECT MAX(updated_minute) FROM experiments WHERE wf=? AND dim=? AND status IN"
-                             " ('no_winner','rolled_back','aborted')", (wf, dim))[0]
+                             " ('rolled_back','aborted')", (wf, dim))[0]
                 if last is not None and now - last < 1440:
+                    continue
+                last_nw = db.q1("SELECT MAX(updated_minute) FROM experiments WHERE wf=? AND dim=? AND status="
+                                "'no_winner'", (wf, dim))[0]
+                if last_nw is not None and now - last_nw < self.s.no_winner_cooldown_days * 1440:
                     continue
                 r = db.q1("SELECT SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=? AND minute<?",
                           (wf, now - 7 * 1440, now))
@@ -583,6 +658,7 @@ class Controller:
                            and compare(Prop(inc[2], inc[1]), Prop(counts[o][2], counts[o][1])).z < -2.33]
                     if bad and set(bad) - set(e.dropped):
                         with db.tx():
+                            self._blacklist(wf, bad)
                             self.exp.plan_drop(e, bad)
                             e.save(db, now)
                             db.decide(now, wf, "experiment_drop_arm", f"{dim}: dropping {bad} (significantly worse)",
@@ -593,16 +669,20 @@ class Controller:
                 if dc["decayed"]:
                     with db.tx():
                         bl = self.exp.plan_rollback(e, dc["decayed"], now)
-                        for o in bl:
-                            black[o] = now + int(self.s.rollback_blacklist_days * 1440)
-                        db.kv_set(f"blacklist:{wf}", black)
+                        self._blacklist(wf, bl)
                         e.save(db, now)
-                        db.decide(now, wf, "decay_detected", f"{dim}: winner stopped winning in {dc['decayed']} —"
+                        db.decide(now, wf, "decay_detected", f"{dim}: winner stopped winning in {dc['decayed']} â€”"
                                   f" rolling back to incumbent", evidence=dc, experiment_id=e.experiment_id,
                                   reasoning="recent winner-vs-holdout lift is significantly below the lift measured at"
                                             " promotion (z<-2.33) or significantly negative")
                     ctx["kinds"].append("decay_rollback")
                     ctx["urgent"] = True
+
+    def _blacklist(self, wf: int, opts: list[str]):
+        black = self.db.kv_get(f"blacklist:{wf}", {})
+        for o in opts:
+            black[o] = self.now + int(self.s.rollback_blacklist_days * 1440)
+        self.db.kv_set(f"blacklist:{wf}", black)
 
     def _apply_look(self, e: Experiment, res: dict, now: int, wf: int):
         a = res["action"]
@@ -616,15 +696,16 @@ class Controller:
                                      " confidence bound chosen")
         elif a == "no_winner":
             self.exp.plan_no_winner(e)
-            self.db.decide(now, wf, "experiment_no_winner", f"{e.dim}: no significant winner at horizon — keep"
+            self.db.decide(now, wf, "experiment_no_winner", f"{e.dim}: no significant winner at horizon â€” keep"
                            f" incumbent {e.incumbent}", evidence=res, experiment_id=e.experiment_id,
                            reasoning="insufficient evidence keeps the incumbent")
         elif a == "drop":
+            self._blacklist(wf, res["drop"])
             self.exp.plan_drop(e, res["drop"])
             self.db.decide(now, wf, "experiment_drop_arm", f"{e.dim}: dropping {res['drop']}", evidence=res,
                            experiment_id=e.experiment_id)
         else:
-            self.db.decide(now, wf, "experiment_look", f"{e.dim}: look t={res.get('t')} — continue", evidence=res,
+            self.db.decide(now, wf, "experiment_look", f"{e.dim}: look t={res.get('t')} â€” continue", evidence=res,
                            experiment_id=e.experiment_id)
 
     # ---- desired config
@@ -883,9 +964,9 @@ class Controller:
                                         f" statistical rule (see evidence).",
                             "promoting": f"{d}: promote the statistically significant winner, keeping a holdout on the"
                                          f" previous option to detect if the effect fades.",
-                            "concluding": f"{d}: the test found no significant winner — return all traffic to the"
+                            "concluding": f"{d}: the test found no significant winner â€” return all traffic to the"
                                           f" current option.",
-                            "rolling_back": f"{d}: the promoted option stopped beating the holdout — roll back.",
+                            "rolling_back": f"{d}: the promoted option stopped beating the holdout â€” roll back.",
                             "running": f"{d}: drop an alternative that is significantly worse."}.get(st, d))
         if "caller_id" in dims:
             out.append(self._did_text(wf))

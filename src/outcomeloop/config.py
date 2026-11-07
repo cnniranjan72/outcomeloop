@@ -33,7 +33,8 @@ class Settings:
     decay_z: float = 2.33              # lift now vs lift at promotion, one-sided 1%
     decay_window_minutes: int = 1440
     decay_min_connected: int = 120
-    rollback_blacklist_days: float = 7.0
+    rollback_blacklist_days: float = 7.0    # decayed / significantly-worse options are not re-tested for a week
+    no_winner_cooldown_days: float = 3.0    # a dimension with no winner is not re-tested immediately
 
     # ---- cohorts (C2/C3)
     min_cohort_share: float = 0.10
@@ -50,6 +51,8 @@ class Settings:
     did_healthy_ratio: float = 0.92
     did_healthy_min_dials: int = 150
     did_probe_share: float = 0.05
+    did_reprobe_share: float = 0.02     # a number that was degraded risks less traffic than an unknown one
+    did_probe_hours: float = 24.0       # a probe is time-boxed: healthy by then, or back to rest
     did_fast_window_minutes: int = 360
     did_slow_window_minutes: int = 1440
     did_min_tv_change: float = 0.05     # don't churn config for tiny re-balancing

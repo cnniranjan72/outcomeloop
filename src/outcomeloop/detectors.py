@@ -7,7 +7,7 @@ from .stats import Prop, binom_excess, compare
 
 
 def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings) -> dict[str, dict]:
-    """Classify each caller ID as healthy / degraded / unknown.
+    """Classify each caller ID as healthy (measured and fine) / degraded / unknown (not enough data).
 
     Caller ID is randomised per dial, so within a window every DID sees the same hour and person mix in
     expectation; comparing a DID's pickup with the pooled pickup of the other DIDs isolates the number itself.
@@ -38,8 +38,8 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings) -> di
                                     "others_pickup": round(oc / on, 4), "ratio": round(ratio, 3), "z": round(cmp_.z, 2)}
             if n >= s.did_min_dials and ratio < s.did_degraded_ratio and cmp_.z < -s.did_degraded_z:
                 degraded = True
-            if name == "slow" and n >= s.did_healthy_min_dials and ratio >= s.did_healthy_ratio:
-                healthy = True
+            if name == "slow" and n >= s.did_healthy_min_dials and ratio >= s.did_degraded_ratio:
+                healthy = True   # measured, and not meaningfully worse than the other numbers
         rec["state"] = "degraded" if degraded else ("healthy" if healthy else "unknown")
         out[opt] = rec
     return out

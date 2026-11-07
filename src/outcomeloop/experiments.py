@@ -138,22 +138,22 @@ class ExperimentEngine:
         if e.status == "designed" and _close(dist, e.design):
             e.status, e.start_minute, e.start_version, e.versions = "running", minute, version, [version]
             return "started"
-        if e.status in ("running", "promoting", "concluding", "rolling_back"):
+        appended = False
+        if e.status in ("running", "promoting", "concluding", "rolling_back", "promoted"):
             if version not in e.versions:
                 e.versions.append(version)
+                appended = True
         if e.status == "promoting" and self._plan_live(e, cfg):
             e.status, e.promoted_minute = "promoted", minute
             e.versions = [version]
             return "promoted"
-        if e.status == "promoted" and version not in e.versions:
-            e.versions.append(version)
         if e.status == "concluding" and self._plan_live(e, cfg):
             e.status = "no_winner"
             return "closed"
         if e.status == "rolling_back" and self._plan_live(e, cfg):
             e.status = "rolled_back"
             return "rolled_back"
-        return None
+        return "versions" if appended else None
 
     def _plan_live(self, e: Experiment, cfg: dict) -> bool:
         for scope, want in e.plan.items():
@@ -208,6 +208,11 @@ class ExperimentEngine:
         winners -= blocked
         res["significant"], res["guardrail_blocked"] = sorted(winners), sorted(blocked)
         if winners:
+            # stability: an effect that has faded in the last 24h is not a winner (non-stationary arms, e.g. novelty)
+            unstable = self._unstable(e, now, sorted(winners), cmps, cohorts)
+            res["stability"] = unstable
+            winners -= {o for o, v in unstable.items() if v.get("unstable")}
+        if winners:
             # deterministic pick: highest 80% lower confidence bound on the lift, ties by option order
             w = max(sorted(winners), key=lambda o: cmps[o].lcb(0.8))
             res["action"], res["winner"] = "promote", w
@@ -223,6 +228,24 @@ class ExperimentEngine:
         elif harmful:
             res["action"], res["drop"] = "drop", harmful
         return res
+
+    def _unstable(self, e: Experiment, now: int, opts: list[str], cmps: dict, cohorts) -> dict:
+        """Recent-window check: the last 24h lift must not be significantly below the whole-window lift, and must
+        not itself be negative. Guards against promoting a variant whose effect is already wearing off."""
+        s = self.s
+        recent = self.arm_counts(e, since=max(e.start_minute or 0, now - s.decay_window_minutes), until=now)["ALL"]
+        i = recent.get(e.incumbent, (0, 0, 0))
+        out = {}
+        for o in opts:
+            w = recent.get(o, (0, 0, 0))
+            rec = {"recent_inc_conn": i[1], "recent_conn": w[1]}
+            if min(i[1], w[1]) >= s.decay_min_connected:
+                rc = compare(Prop(i[2], i[1]), Prop(w[2], w[1]))
+                zd = (rc.diff - cmps[o].diff) / ((rc.se ** 2 + cmps[o].se ** 2) ** 0.5)
+                rec.update({"recent_lift": round(rc.diff, 4), "z_vs_overall": round(zd, 2)})
+                rec["unstable"] = zd < -s.harm_z or rc.diff <= 0
+            out[o] = rec
+        return out
 
     def _cohort_plan(self, e: Experiment, winner: str, counts: dict, cohorts: list[Cohort]) -> dict:
         """Before promoting a pooled winner, check every cohort: where the winner is significantly worse than the
@@ -322,9 +345,13 @@ class ExperimentEngine:
             rec = {"holdout_connected": i[1], "winner_connected": w[1]}
             if i[1] >= s.decay_min_connected and w[1] >= s.decay_min_connected:
                 now_c = compare(Prop(i[2], i[1]), Prop(w[2], w[1]))
-                zd = (now_c.diff - pr["diff"]) / ((now_c.se ** 2 + pr["se"] ** 2) ** 0.5)
+                # winner's curse: a lift measured at the moment it first crossed a significance boundary is biased
+                # upward, so compare against its 80% lower confidence bound, not its point estimate
+                promo_ref = pr["diff"] - z_of(0.2) * pr["se"]
+                zd = (now_c.diff - promo_ref) / ((now_c.se ** 2 + pr["se"] ** 2) ** 0.5)
                 rec.update({"lift_now": round(now_c.diff, 4), "z_now": round(now_c.z, 2),
-                            "lift_at_promotion": round(pr["diff"], 4), "z_vs_promotion": round(zd, 2)})
+                            "lift_at_promotion": round(pr["diff"], 4), "promotion_lcb80": round(promo_ref, 4),
+                            "z_vs_promotion": round(zd, 2)})
                 if zd < -s.decay_z or (now_c.diff < 0 and now_c.z < -s.harm_z):
                     out["decayed"].append(scope)
             out["scopes"][scope] = rec
