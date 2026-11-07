@@ -7,7 +7,7 @@ from .stats import Prop, binom_excess, compare
 
 
 def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
-               probing: set[str] | None = None) -> dict[str, dict]:
+               probing: set[str] | None = None, since: dict[str, int] | None = None) -> dict[str, dict]:
     """Classify each caller ID as healthy (measured and fine) / degraded / unknown (not enough data).
 
     Caller ID is randomised per dial, so within a window every DID sees the same hour and person mix in
@@ -19,15 +19,23 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
     windows = {"fast": s.did_fast_window_minutes, "slow": s.did_slow_window_minutes,
                "long": s.did_long_window_minutes}
     stats = {}
-    for name, w in windows.items():
+    def window(lo):
         rows = db.q("SELECT did, COUNT(*), SUM(conn) FROM calls WHERE wf=? AND minute>=? AND minute<? GROUP BY did",
-                    (wf, now - w, now))
-        stats[name] = {db.decode("caller_id", d): (n, c) for d, n, c in rows}
+                    (wf, lo, now))
+        return {db.decode("caller_id", d): (n, c) for d, n, c in rows}
+    for name, w in windows.items():
+        stats[name] = window(now - w)
+    since = since or {}
     for opt in options:
         rec = {"state": "unknown", "windows": {}}
         degraded = healthy = False
         for name in windows:
             st = stats[name]
+            # evidence must postdate the number's last state change (a re-probe must not be judged on data from
+            # before it was flagged)
+            lo = since.get(opt)
+            if lo is not None and lo > now - windows[name]:
+                st = window(lo)
             n, c = st.get(opt, (0, 0))
             on = sum(v[0] for k, v in st.items() if k != opt)
             oc = sum(v[1] for k, v in st.items() if k != opt)

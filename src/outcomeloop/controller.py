@@ -392,9 +392,9 @@ class Controller:
     def detect_did(self, wf, spec, now, ctx) -> dict:
         opts = spec["options"]["caller_id"]
         mem = self.db.kv_get(f"did:{wf}", {})
-        cur_alloc = self.sim.config(spec["workflow_id"])["config"]["allocations"]["default"]["caller_id"]
         probing = {d for d in opts if mem.get(d, {}).get("state", "unknown") in ("unknown", "probe")}
-        health = did_health(self.db, wf, opts, now, self.s, probing)
+        since = {d: mem[d]["since"] for d in opts if mem.get(d, {}).get("state") == "probe"}
+        health = did_health(self.db, wf, opts, now, self.s, probing, since)
         changed = []
         for d, h in health.items():
             prev = mem.get(d, {}).get("state", "unknown")
