@@ -63,7 +63,7 @@ def test_customer_view_names_what_was_heard_and_who_set_it(db):
     add_calls(db, wf, 1, 1, 1, minute=600, voice="V3")
     person = db.q1("SELECT person FROM calls")[0]
     out = views.customer(db, f"wfA:p{person}", None)
-    assert "heard W1 V3 P1 from D1" in out and "engaged" in out and "by controller_approved · ol-1 · apr_1" in out
+    assert "variant W1 V3 P1 from D1" in out and "engaged" in out and "by controller_approved · ol-1 · apr_1" in out
 
 
 def test_customer_view_labels_a_supervisor_edit_as_outside_governance(db):
