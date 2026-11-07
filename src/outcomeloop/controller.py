@@ -538,7 +538,10 @@ class Controller:
                 thr = spec["governance"].get("min_validation_pass_rate", 0.97)
                 run = self._validate(wf, spec, d["bad_prompt"], purpose=f"confirm {iid}")
                 d["confirmation"] = run
-                if run and run["pass_rate"] >= thr:
+                se = (run["pass_rate"] * (1 - run["pass_rate"]) / run["n"]) ** 0.5 if run else 0
+                # the production detector has already fired: only a clearly safe validation (>= threshold + 1 SE)
+                # vetoes it; a result inside the noise band of the threshold gives the benefit of the doubt to safety
+                if run and run["pass_rate"] >= thr + se:
                     with db.tx():
                         db.x("UPDATE incidents SET state='closed', closed_minute=?, data=? WHERE incident_id=?",
                              (now, dumps(d), iid))
@@ -795,6 +798,19 @@ class Controller:
                             db.decide(now, wf, "experiment_drop_arm", f"{dim}: dropping {bad} (significantly worse)",
                                       evidence={o: counts.get(o) for o in bad} | {"incumbent": inc},
                                       experiment_id=e.experiment_id)
+            elif e.status == "promoting" and e.promo and e.winner and "," not in e.winner:
+                # the promotion was decided at a look but is not live yet (approval latency, stale base, rejection):
+                # re-check that the effect has not faded before we keep asking for it
+                st = self.exp._unstable(e, now, [e.winner], {e.winner: _Cmp(e.promo["default"])}, cohorts)
+                if st.get(e.winner, {}).get("unstable"):
+                    with db.tx():
+                        e.status, e.plan, e.promo, e.winner = "running", {"default": e.design}, {}, None
+                        e.save(db, now)
+                        db.decide(now, wf, "promotion_withdrawn", f"{dim}: pending promotion withdrawn — the effect"
+                                  f" has faded in the last 24 h; the test continues", evidence=st,
+                                  experiment_id=e.experiment_id,
+                                  reasoning="evidence must still hold when the change is applied, not only when it"
+                                            " was decided")
             elif e.status == "promoted":
                 dc = self.exp.decay_check(e, now, cohorts)
                 if dc["decayed"]:
@@ -1200,6 +1216,12 @@ class Controller:
                               {"day": d, **{k: round(v, 2) for k, v in a.items()}})
                     log.info("D%d done: %.1fs wall, credits %.0f, ingest total %d events", d, time.time() - w0,
                              st["credits_remaining"], self.ing.events_total)
+
+
+class _Cmp:
+    """Minimal stand-in for stats.Comparison built from a stored promotion record (diff, se)."""
+    def __init__(self, rec: dict):
+        self.diff, self.se = rec["diff"], rec["se"]
 
 
 def _alloc_changed(old, new, dim) -> bool:
