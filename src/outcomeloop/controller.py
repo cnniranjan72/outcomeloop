@@ -21,6 +21,7 @@ from .config import Settings
 from .db import DB, dumps
 from .detectors import did_health, did_own_past, halluc_baseline, halluc_spike, kpi_drift
 from .experiments import EXP_DIMS, Experiment, ExperimentEngine
+from .persontime import PersonTime
 from .governance import Governance
 from .ingest import Ingestor
 from .simclient import ApiError, SimClient, Uncertain
@@ -107,6 +108,7 @@ class Controller:
         self.ing = Ingestor(self.db, self.sim)
         self.gov = Governance(self.db, self.sim, s)
         self.exp = ExperimentEngine(self.db, s)
+        self.ptime = PersonTime(self.db, s)
         self.specs: dict[int, dict] = {}
         self.wf_by_id: dict[str, int] = {}
         self.now = 0
@@ -411,6 +413,7 @@ class Controller:
                     db.decide(now, wf, "alert", f"KPI drift: {drift['alerts']}", evidence=drift)
             self.check_cohort_agreement(wf, cfg, now)
         self.step_experiments(wf, spec, cfg, now, ctx)
+        self.step_persontime(wf, spec, now, ctx)
 
         desired = self.desired_config(wf, spec, cfg, dids, ctx)
         self.route(wf, spec, cur, desired, ctx)
@@ -441,6 +444,31 @@ class Controller:
                 db.decide(now, wf, "alert", f"cohort definitions diverged: {bad}/{total} calls assigned differently"
                           f" by us and by the simulator", evidence=out)
         return out
+
+    # ---- per-person call time (C4), as a randomised experiment
+    def step_persontime(self, wf, spec, now, ctx):
+        """Daily at the start of the dialling window: look (expand / stop / continue), then refresh the treated
+        people's preferred hours. Only where `schedule` is auto-appliable by policy (see persontime.py)."""
+        if not self.s.person_time or now < 0 or (now % 1440) // 60 != spec["dialling_window"][0]                 or "schedule" in ctx["locks"]:
+            return
+        if not self.ptime.eligible(spec, set(self.db.kv_get(f"supervisor_dims:{wf}", []))):
+            return
+        st = self.ptime.state(wf)
+        if st["status"] in ("testing", "expanded"):
+            res = self.ptime.look(wf, now)
+            with self.db.tx():
+                self.db.decide(now, wf, "person_time_look", f"per-person call time: {res['action']}"
+                               + (f" (pickup {res['pickup_t']:.3f} treated vs {res['pickup_c']:.3f} control, z {res['z']})"
+                                  if "z" in res else ""), evidence=res,
+                               reasoning="randomised by person; pickup per dial after each person became a candidate;"
+                                         " one-sided z at 1 % per daily look, >= 400 dials per arm; no evidence by"
+                                         " day 5 -> stop")
+        pmap = self.ptime.refresh(wf, spec, now)
+        with self.db.tx():
+            self.db.kv_set(f"ptime_map:{wf}", {"day": now // 1440, "map": pmap,
+                                                "status": self.ptime.state(wf)["status"]})
+            self.db.decide(now, wf, "person_time_refresh", f"per-person call time ({self.ptime.state(wf)['status']}):"
+                           f" {len(pmap)} treated people with a preferred hour", evidence={"treated": len(pmap)})
 
     # ---- bootstrap from history (C3)
     def bootstrap(self, wf: int):
@@ -992,6 +1020,21 @@ class Controller:
                     if new["schedule"] != cfg["schedule"]:
                         comps["schedule"] = {"summary": f"call-hour weights for {len(sch['hour_weights'])} cohorts",
                                              "dry_run": sch.get("dry_run")}
+        pm = db.kv_get(f"ptime_map:{wf}")
+        if pm and "schedule" not in locks:
+            cur_lph = cfg["schedule"].get("lead_preferred_hour", {})
+            mine = set(db.kv_get(f"ptime_written:{wf}", []))
+            # keep entries someone else (a supervisor) set; ours are replaced by the current map or removed on stop
+            lph = {k: v for k, v in cur_lph.items() if k not in mine}
+            if pm["status"] in ("testing", "expanded"):
+                lph.update(pm["map"])
+            sched = new.setdefault("schedule", copy.deepcopy(cfg["schedule"]))
+            if lph != cur_lph:
+                sched["lead_preferred_hour"] = lph
+                comps.setdefault("schedule", {"summary": "", "dry_run": None})
+                comps["schedule"]["summary"] = (comps["schedule"]["summary"] + "; " if comps["schedule"]["summary"] else "")                     + f"per-person preferred hours for {len(pm['map'])} treated people ({pm['status']})"
+                with db.tx():   # remember every entry we ever wrote, so a stop removes ours and only ours
+                    db.kv_set(f"ptime_written:{wf}", sorted(mine | set(pm["map"])))
         if "caller_id" not in locks:
             cur = cfg["allocations"]["default"]["caller_id"]
             tgt = self.did_target(spec["options"]["caller_id"], dids, cur)

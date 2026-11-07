@@ -78,6 +78,7 @@ class Settings:
     ramp_daily_shift_multiple: float = 3.0
     customer_facing_dims: tuple = ("welcome_message", "voice", "prompt_version")
     tenant_preferences: dict = field(default_factory=dict)
+    person_time: bool = True            # per-person call-time experiment (OUTCOMELOOP_PERSON_TIME=0 disables, for ablation)
 
     @classmethod
     def load(cls, sim_url: str | None = None) -> "Settings":
@@ -85,6 +86,7 @@ class Settings:
         if sim_url:
             s.sim_url = sim_url
         s.db_path = os.environ.get("OUTCOMELOOP_DB", s.db_path)
+        s.person_time = os.environ.get("OUTCOMELOOP_PERSON_TIME", "1") != "0"
         pref = Path(os.environ.get("OUTCOMELOOP_TENANT_PREFS", "config/tenant_preferences.json"))
         if pref.exists():
             s.tenant_preferences = json.loads(pref.read_text())
