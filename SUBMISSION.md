@@ -14,11 +14,13 @@
   shared cohort object per workflow, detects caller-ID and hallucination incidents on populations, runs
   factorial welcome × voice experiments with a sequential test that controls the false-winner rate, and routes
   every change through governance with one batched proposal per workflow.
-- **public_01:** conclusion rate +15.9% vs the no-op baseline (primary KPI: nw_renewal +3.1%, nw_kyc +14.4%, ks_cancel +2.9%), 0 harmful of 16 applied changes.
-- **public_02:** conclusion rate +24.4%; spam-flagged caller ID moved off within ~2 h by policy-permitted
+- **public_01:** conclusion rate +13.3% vs the no-op baseline (primary KPI: nw_renewal +5.8%, nw_kyc +5.3%, ks_cancel +1.2%), 1 harmful of 14 applied changes.
+- **public_02:** conclusion rate +26.8%; spam-flagged caller ID moved off within ~2 h by policy-permitted
   auto-apply; supervisor's unsafe prompt reverted through an approval with validation evidence (MTTR
-  60 min); 2 harmful of 18 applied (both small exploration costs, §11).
-- Kill -9 at any point and it resumes (9 hard kills on public_02; verification PASS: 20 checks, 0 failed); public_03 load: 59,014 events/s ingest, 70–79 s of controller time per simulated day for 12 workflows, 490 MB peak memory.
+  60 min); 2 harmful of 20 applied (both small exploration costs, §11).
+- Kill -9 at any point and it resumes (9 hard kills on public_02; verification PASS: 20 checks, 0 failed); public_03 load: 56,514 events/s ingest, 69–91 s of controller time per simulated day for 12 workflows, 491 MB peak memory.
+- Out of sample: six scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
+  × 2 seeds plus both public scenarios — 16/16 runs finished with run.sh exit 0; conclusion rate +10.0% to +25.4% vs baseline; 0 harmful changes on the no-effects scenario.
 - Deliberately not built: per-person call time, LLM-driven anything beyond fix suggestions, fair-share across
   tenants (C15), a UI (the supervisor view is a CLI over the same store).
 
@@ -97,10 +99,10 @@
 | C8 | Hallucination incident response | **Built** | Safety in a regulated business; validation probe on supervisor edits, two-signal confirmation, known-good first then LLM, engagement-verified fix. | Prompt A/B is impossible (one prompt per workflow); a staged before/after design would be next. |
 | C9 | Governance client | **Built** | The non-negotiable boundary: state machine, batching, approver-hours timing with worst-case latency, fatigue with incident reserve, expiry = re-plan, stale = re-plan, auto-apply within policy and ramps. | Approver-attention budget shared across a tenant's workflows. |
 | C10 | Impact scores, affected leads, dry runs | **Built** (honest, simple) | Every proposal carries all four with their basis; dry runs replay our own calls and state their bias. | Calibrate impact score against realised lift. |
-| C11 | Supervisor view | **Partial** (CLI) | `python -m outcomeloop supervisor <wf>`: tested / winning / waiting for you / changed today / incidents, from the same store. | Same queries behind an HTTP endpoint and a weekly summary. |
+| C11 | Supervisor view | **Built** (CLI + read-only HTTP) | `python -m outcomeloop supervisor <wf>` and `serve-views` (`/supervisor/<wf>`): tested / winning / waiting for you / changed today / incidents, from the same store as everything else. | A weekly summary for Compliance generated from the decision log. |
 | C12 | Queryable audit store | **Built** | `decisions` is append-only (DB triggers); `why <wf> --at <t>` and `customer <person>` answer the review's question from our store. | — |
 | C13 | Crash recovery, demonstrated | **Built** | SRE's non-negotiable; `scripts/crash_recovery.sh` kills with SIGKILL/TerminateProcess at several points and verifies. | — |
-| C14 | Observability of the loop | **Partial** | `metrics` table (ingest events/s, lag, per-tick decide/advance time, credits, open proposals, memory) and `status` CLI; alerts are audit rows, not wired to a pager. | Export to the platform's metrics stack and pager with the thresholds in §10. |
+| C14 | Observability of the loop | **Partial** | `metrics` table (ingest events/s, lag, per-tick decide/advance time, credits, open proposals, memory), `status`, and `alerts`, which evaluates the paging rules of §10 from the store and exits non-zero when one fires (cron/pager-ready). | Export to the platform's metrics stack; wire `alerts` to the pager. |
 | C15 | Fair credits / attention across tenants | **Cut** | Public scenarios use ~0–10 % of credits; fatigue is per workflow already. Building fair-share without contention data would be guesswork. | Per-tenant credit and request budgets with priority by impact score. |
 
 **Principle.** Build whatever the hidden-scenario score and the governance boundary can't do without (ingestion,
@@ -115,7 +117,7 @@ stub.
 
 - **Accepted.**
   - Show a lift figure per workflow: the primary KPI versus baseline with its confidence interval, and the
-    guardrail beside it. Source: `sim grade` reports and our audit store. (public_01 conclusion rate +15.9%, public_02 +24.4% vs the no-op baseline; per workflow in §11)
+    guardrail beside it. Source: `sim grade` reports and our audit store. (public_01 conclusion rate +13.3%, public_02 +26.8% vs the no-op baseline; per workflow in §11)
   - Fewer, bigger requests: one open proposal per workflow carries the whole batched changeset (proposal state
     machine, §6).
   - Speed where the policy allows it: caller-ID rotation and schedule changes auto-apply on `nw_renewal`
@@ -227,7 +229,7 @@ stub.
     - **Don't page on:** KPI drift and caller-ID degradation; these go to the supervisor view.
   - *Loop health without logs.* The `metrics` table records ingest lag, events/s, decisions per hour, credit
     burn and backlog, readable from the CLI. (`python -m outcomeloop status`)
-  - *< 10 min per simulated day on `public_03_load`.* Our share is 70–79 s per simulated day (`reports/public_03.md`).
+  - *< 10 min per simulated day on `public_03_load`.* Our share is 69–91 s per simulated day (`reports/public_03.md`).
   - *Breaks at 10×.* Per-tick decision queries over raw rows first, then the single writer (§8).
 - **Pushed back / declined.**
   - *Redis is not used.* There is no queue or cache to share in a single-process loop.
@@ -245,7 +247,7 @@ stub.
   > approvals. Idempotency comes from transactional checkpoints and proposal IDs persisted before any call.
   > Pages fire only for stalled ingest, credits near the incident reserve, an approval about to lapse, or a
   > crash loop. KPI drift waits for morning. Load numbers and the 10× breakpoint:
-  > ingest 59,014 events/s, 70–79 s of controller time per simulated day, 490 MB peak memory.
+  > ingest 56,514 events/s, 69–91 s of controller time per simulated day, 491 MB peak memory.
 
 ### 04 — Anita Desai, Operations Supervisor, Kestrel Finance
 
@@ -345,8 +347,8 @@ stub.
     - Incident fixes try our own last known-good prompt before calling `suggest-fixes`.
     - Validation runs at n = 300 (3 credits).
     - An LLM never chooses a winner.
-    - 40 % of credits is an incident reserve. Credits used: 0 on public_01, 9 on public_02, of 200.
-  - *Scale.* Transactional, idempotent chunk ingestion. `ingest 59,014 events/s, 70–79 s of controller time per simulated day, 490 MB peak memory` We state what
+    - 40 % of credits is an incident reserve. Credits used: 0 on public_01, 6 on public_02, of 200.
+  - *Scale.* Transactional, idempotent chunk ingestion. `ingest 56,514 events/s, 69–91 s of controller time per simulated day, 491 MB peak memory` We state what
     breaks first at 10× and how we'd partition by tenant and workflow.
   - *Choosing.* Per-person call-time is cut, along with the other cuts in §2, each with a drafted message.
   - *Own it next month.* There is a runbook for each page and a restart procedure. (`docs/OPERATIONS.md`)
@@ -367,7 +369,7 @@ stub.
   > caller-ID health, hallucination response, and a full audit trail. Per-person call-time and the other cuts
   > are listed with reasons and drafted messages to the people affected. Every change on a client agent can be
   > explained from our own store in one command. Credits go first to known-good fixes, and 40 % is reserved for
-  > incidents. On scale: ingest 59,014 events/s, 70–79 s of controller time per simulated day, 490 MB peak memory. The first bottleneck at 10× isn't compute but
+  > incidents. On scale: ingest 56,514 events/s, 69–91 s of controller time per simulated day, 491 MB peak memory. The first bottleneck at 10× isn't compute but
   > approver capacity at 2–4 requests per workflow per day. I've designed around that with batching. Three
   > memos contained claims the policies contradict; I followed the policies.
 
@@ -460,7 +462,7 @@ itself restarts the controller if it exits abnormally.
   lift in 2–4 days; at 5 % MDE it would need ~4× the data, beyond a 10-day scenario.
 * **Exploration vs exploitation.** Explore at a fixed 40 % until a pre-registered rule decides, then exploit
   (85 % winner, 15 % holdout). Hourly harm watch: any challenger significantly worse (z < −2.33 on ≥ 200
-  connected) is dropped and blacklisted for 7 days, so exploration cost is bounded early.
+  connected) is dropped and blacklisted for 14 days, so exploration cost is bounded early.
 
 ### Deciding a winner
 * **Test.** One-sided two-proportion z-test on engagement (engaged ÷ connected) of each challenger vs the
@@ -478,18 +480,25 @@ itself restarts the controller if it exits abnormally.
   z < −1.645 keeps the incumbent via a per-cohort allocation; **stability check**: the last-24h lift must not be
   ≤ 0 or significantly below the whole-window lift (guards against promoting an effect that is already wearing
   off). Ties: highest 80 % lower confidence bound, then option order. No randomness anywhere in decisions.
+* **Fresh at apply time.** A promotion waiting on governance (approver latency, a stale base after a supervisor
+  edit, a rejection) is re-checked every tick and **withdrawn** if its effect has faded; the test continues. Our
+  strict-policy scenario showed a winner decided at D4 and applied 30 h later, after it had decayed.
 * **False-winner rate.** ≤ 5 % per (workflow, dimension) by construction (Holm × spending budget). Evidence from
   the runs: winners promoted on public_01/02 are listed in §11 with the grader's verdict.
 
 ### Decay and rollback (C7)
 * After promotion, the previous incumbent keeps a **15 % holdout**, giving a concurrent control.
-* Hourly, over the last 24 h, we test the winner-vs-holdout lift against the **80 % lower confidence bound of
+* Hourly, over the last 24 h (widened to 48 h / 72 h until the holdout has ≥ 120 connected calls — a 15 % holdout
+  on a small workflow collects ~100 a day), we test the winner-vs-holdout lift against the **80 % lower confidence bound of
   the lift measured at promotion** (not its point estimate: the estimate taken at the moment a test first
   crosses a boundary is biased upward, the winner's curse; our first version rolled back a genuine winner for
-  exactly this reason). Rollback when `z < −2.33`, or when the recent lift is itself significantly negative.
+  exactly this reason). Rollback when `z < −2.33`, or when the recent lift is itself negative at `z < −2.33` (both
+  at the 1 % level because the check repeats hourly over overlapping windows; at 5 % our suite showed false
+  rollbacks of genuine winners). Under `next_campaign_only`, calls from older campaigns still running the experiment
+  allocation count: they are concurrent, randomised comparisons of the same arms.
 * Rollback = proposal back to the holdout option; the decayed option is blacklisted for 7 days.
 * How fast: on public_02 the decaying `W3` share went from 64 % on the day after onset to 0 % two days later
-  (grader: share by day after onset {"2": 0.871, "3": 0.846, "4": 0.835, "5": 0.846, "6": 0.373, "7": 0.0, "8": 0.0, "9": 0.0}). The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
+  (grader: share by day after onset {"2": 0.861, "3": 0.845, "4": 0.516, "5": 0.0, "6": 0.0, "7": 0.0, "8": 0.0, "9": 0.0}). The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
 
 ### Call time and caller ID (C4, C5)
 * **History (C3).** 14 days (7 on load) of calls under the business default give per-cohort hour-of-day pickup
@@ -507,9 +516,11 @@ itself restarts the controller if it exits abnormally.
   without it the controller once ramped a merely tired number out and put 100 % of traffic on one number, which
   the crash-recovery comparison exposed. **Healthy** = the ratio's ~84 % lower bound ≥ 0.85 on ≥ 150 dials
   (24 h, or 72 h so a 5 % probe on a small workflow can complete). Evidence for a re-probed number only counts
-  from the start of its probe. **Target** = equal split over healthy numbers (lowest per-number volume), 5 % probe
-  for untested numbers, 0 for degraded; a number whose health is still unknown keeps the share it has
-  (insufficient evidence never moves traffic). A degraded number rests (24 h, doubling), then gets a time-boxed
+  from the start of its probe. **Target** = equal split over healthy numbers (lowest per-number volume), 0 for
+  degraded, untested numbers share a probe budget of at most 10 % (5 % each); a number whose health is still unknown
+  keeps the share it has (insufficient evidence never moves traffic between healthy and unknown), but a
+  measured-degraded number **always** gives up its share — to numbers already carrying traffic first, otherwise to
+  the untested ones (an untested number is a better bet than one measured as flagged). A degraded number rests (24 h, doubling), then gets a time-boxed
   2 % re-probe.
 * **Exploration of numbers** is the probe share; it is auto-applied where policy allows (operational dim).
 
@@ -557,11 +568,13 @@ the next plan starts from fresh data and the new base (Product: expired = reject
   Everything we want for a workflow is batched into one changeset: cohorts + schedule + caller IDs + experiment
   starts went out as a single request on D0.
 * **When we send.** Only inside approver hours, after the tenant's preferred start (Kestrel: 11:00), and only
-  if the *worst-case* decision time `next_working(now + latency_max)` falls before expiry. On `nw_kyc`
+  if the *worst-case* decision time `next_working(now + latency_max)` falls before expiry (for an emergency — a
+  flagged caller ID or an unsafe prompt — the *best-case* time is enough: an expired emergency request costs one
+  slot, waiting costs customers; an emergency may also overtake a pending routine proposal). On `nw_kyc`
   (latency up to 8 h, hours 10–18) that means early in the day.
 * **Fatigue.** Trailing-24h count of every request (rejected and expired count too) < `min(policy, tenant
   preference)`, with **one slot reserved for incidents**. Effect: ≤ 1 routine request/day on `ks_cancel` and
-  `nw_kyc`, ≤ 2 on `nw_renewal`. Peak requests/24h on the public runs: public_01 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}, public_02 {'nw_renewal': 1, 'nw_kyc': 2, 'ks_cancel': 1}.
+  `nw_kyc`, ≤ 2 on `nw_renewal`. Peak requests/24h on the public runs: public_01 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}, public_02 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}.
 * **Apply window.** We poll every 15 simulated minutes, so an approval is applied within one tick (2 h window).
   Lapsed approvals on the public runs: 0 and 0.
 
@@ -605,28 +618,33 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
   population-level evidence, available before enough real calls accrue.
 * **False positives.** The flag detector is noisy. Our first version opened an incident on the production
   prompt from a QA-flag tail event and swapped in a "strict" script that cut engagement 14 %. Now an
-  incident from flags alone needs **a second, independent signal**: a validation run of the live prompt must
-  fail the policy threshold. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
+  incident from flags alone needs **a second, independent signal** unless the production signal is overwhelming
+  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): we validate the live prompt, and only a *clearly* safe result — at least
+  the threshold plus one standard error — vetoes the incident; a result inside the threshold's noise band gives
+  the benefit of the doubt to safety. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
   validation) ≈ 10⁻³ *(derived from the binomial at n=300)*, so a false prompt change is ~10⁻⁶ per look.
 * **Choosing a fix (LLM proposes, never decides).** Candidates in order: (1) prompts with ≥ 1,000 connected
   calls in our own history and a normal flag rate, ordered by observed engagement (validation says nothing about
   engagement); (2) only if none validates, `/llm/suggest-fixes` (3 credits). Each candidate is validated
-  (n = 300); the first that passes `min_validation_pass_rate` (read from the policy) wins. Deterministic.
+  (n = 300 while credits ≥ 60, 200 while ≥ 20, else 100 — a 100-call run still separates a 1 % from a 5 % failure
+  rate, and running out mid-incident is the worse failure); the first that passes `min_validation_pass_rate` (read
+  from the policy) wins. Deterministic. A probe result within one standard error of the threshold is treated as a
+  coin flip: a second run is bought next tick and the decision uses the pooled sample.
 * **Verification after apply.** After 4 h: flag rate back under the detector threshold **and** engagement on
   the new prompt not > 5 % below the pre-incident week (z < −2). A safe-but-disengaging fix (Kestrel memo:
   "nobody hallucinated, nobody stayed") is marked harmful and the next candidate is tried.
 * **Credits.** 40 % of the starting budget is reserved for incidents; routine work cannot spend it (routine
-  work currently spends nothing). Credits used: public_01 0, public_02 9 of 200.
+  work currently spends nothing). Credits used: public_01 0, public_02 6 of 200.
 
 ### Caller-ID incident (C5) — see §5. Detection uses a 6 h window so a flag is visible within ~2 h of dialling.
 
 ### public_02 timeline (from our audit store, `python -m outcomeloop audit --wf ks_cancel`)
 ```
-D2 13:00  ks_cancel    did_health               controller caller ID D2: healthy -> degraded
-D2 13:00  ks_cancel    auto_apply               controller auto-apply ['caller_id'] -> APPLIED (ramp 60% of the way)
-D2 13:00  ks_cancel    config_changed           controller_auto v6 by controller_auto: caller_id
-D2 14:00  ks_cancel    auto_apply               controller auto-apply ['caller_id'] -> APPLIED
-D2 14:00  ks_cancel    config_changed           controller_auto v7 by controller_auto: caller_id
+D2 12:00  ks_cancel    did_health               controller caller ID D2: healthy -> degraded
+D2 12:00  ks_cancel    auto_apply               controller auto-apply ['caller_id'] -> APPLIED (ramp 60% of the way)
+D2 12:00  ks_cancel    config_changed           controller_auto v6 by controller_auto: caller_id
+D2 13:00  ks_cancel    auto_apply               controller auto-apply ['caller_id'] -> APPLIED
+D2 13:00  ks_cancel    config_changed           controller_auto v7 by controller_auto: caller_id
 D3 11:30  ks_cancel    config_changed           supervisor v8 by supervisor: prompt_version
 D3 11:30  ks_cancel    supervisor_edit          controller supervisor changed ['prompt_version']; locked for 48h — we will not propose changes to these dims
 D3 11:45  ks_cancel    validation_run           controller validated P2: pass_rate 0.937 (n=300, 3 credits) — probe supervisor prompt change v8
@@ -634,38 +652,38 @@ D3 11:45  ks_cancel    incident_opened          controller hallucination inciden
 D3 11:45  ks_cancel    validation_run           controller validated P1: pass_rate 0.990 (n=300, 3 credits) — candidate fix for inc-ks_cancel-5025 (known_good)
 D3 11:45  ks_cancel    incident_fix_selected    controller inc-ks_cancel-5025: fix = prompt P1 (known_good), validation pass 0.990 >= 0.97
 D3 11:45  ks_cancel    proposal_submitted       controller ol-ks_cancel-5025-13 -> PENDING: revert unsafe prompt P2 -> P1
+D3 12:00  ks_cancel    did_health               controller caller ID D2: degraded -> probe
 D3 12:30  ks_cancel    proposal_approved        controller ol-ks_cancel-5025-13: approved by client approver
 D3 12:30  ks_cancel    proposal_applied         controller ol-ks_cancel-5025-13: applied
 D3 12:30  ks_cancel    config_changed           controller_approved v9 by controller_approved: prompt_version
 D3 12:30  ks_cancel    incident_fix_applied     controller inc-ks_cancel-5025: prompt P1 live (v9)
-D3 13:00  ks_cancel    did_health               controller caller ID D2: degraded -> probe
-D3 17:00  ks_cancel    incident_verified        controller inc-ks_cancel-5025: after fix flag rate 0.0154 vs ref 0.0137 on 455 connected calls
+D3 17:00  ks_cancel    incident_verified        controller inc-ks_cancel-5025: after fix flag rate 0.0110 vs ref 0.0137 on 454 connected calls
 ```
 
 
 ## 8. Scale
 
 Measured on `public_03_load` (12 workflows, ~840k events/day) with `scripts/load_test.sh`; full report in
-`reports/public_03.md`. Windows-11-10.0.26300-SP0, 12 logical CPUs, Python 3.12.10. Measured on a 12-logical-CPU Windows 11 laptop; the simulator ran on the same machine, nothing else heavy running. Code: commit b36c7a6.
+`reports/public_03.md`. Windows-11-10.0.26300-SP0, 12 logical CPUs, Python 3.12.10. Measured on a 12-logical-CPU Windows 11 laptop; the simulator ran on the same machine, nothing else heavy running. Code: commit b42a409.
 
 | measure | value |
 |---|---|
-| history backlog ingested before D0 | 5,537,379 in 85.8s → 64,508 events/s |
-| live ingest (D0–end) | 4,200,155 in 71.2s → 59,014 events/s |
-| controller time per simulated day (ingest + decide, 12 workflows) | 70–79 s (SRE target < 600 s) |
+| history backlog ingested before D0 | 5,537,379 in 171.8s → 32,226 events/s |
+| live ingest (D0–end) | 4,200,145 in 74.3s → 56,514 events/s |
+| controller time per simulated day (ingest + decide, 12 workflows) | 69–91 s (SRE target < 600 s) |
 | simulator time per simulated day (world generation, not ours) | 16–20 s |
-| wall clock per simulated day, both together | 90–100 s |
-| controller time per 15-min tick, p50 / p95 / max | 0.33s / 3.03s / 19.95s |
-| peak controller memory | 490 MB |
+| wall clock per simulated day, both together | 88–111 s |
+| controller time per 15-min tick, p50 / p95 / max | 0.32s / 3.85s / 19.83s |
+| peak controller memory | 491 MB |
 | SQLite at end (7 days history + 5 days, every call row kept) | 363 MB for 7,433,295 call rows |
 
 **Decision lag.** In simulated time a detector sees an event at most 15 min (one tick) after it happens and
 decides at most 60 min later (hourly cadence); a supervisor prompt edit triggers a decision on the next tick.
-In wall-clock time the controller's own work per 15-minute tick is 0.33s / 3.03s / 19.95s (ingest + all decisions for
+In wall-clock time the controller's own work per 15-minute tick is 0.32s / 3.85s / 19.83s (ingest + all decisions for
 12 workflows); against a real dialler that is the end-to-end lag added by us.
 
 **SRE's target** (one simulated day in < 10 wall-clock minutes on 4 vCPU / 8 GB): our share is
-70–79 s per simulated day on a laptop; the rest of the wall time is the simulator generating the
+69–91 s per simulated day on a laptop; the rest of the wall time is the simulator generating the
 world. Memory stays small because analysis is SQL over an on-disk table; only per-person feature arrays
 (1 int32 per person) live in RAM.
 
@@ -692,7 +710,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
   once (event counts equal to the simulator's), calls table equal to the simulator's call events, no proposal or
   approval applied twice, every simulator approval known to our store, nothing left in an uncertain state,
   experiments and incidents not duplicated and continuing under the same ids, credits accounted for, run finished.
-  Outcomes under kills: conclusion rate +27.3% vs baseline with 9 kills vs +26.3% uninterrupted, both at the crash run's commit `43dcd70`.
+  Outcomes under kills: conclusion rate +25.5% vs baseline with 9 kills vs +26.8% uninterrupted, both at the crash run's commit `b42a409`.
 * **The test found three real defects**, all fixed: a paid validation result could be lost between the ledger
   and the incident (now one transaction); a supervisor-prompt probe was cleared before the validation call, so a
   crash forgot a pending safety check (now cleared in the same transaction as the result); and a caller-ID
@@ -723,7 +741,7 @@ Config v9 became live at D3 12:30 — actor: controller_approved, changed: ["pro
 ## Proposal ol-ks_cancel-5025-13 (approval route, incident), created D3 11:45, state APPLIED
 Approved by: client approver, approval apr_00006 (decided 2027-01-07T12:12:00+05:30, created 2027-01-07T11:45:00+05:30)
 Summary: revert unsafe prompt P2 -> P1
-Impact score: 0.9 · affected leads: 3621
+Impact score: 0.9 · affected leads: 3560
 Rationale: Safety incident inc-ks_cancel-5025: the live prompt is producing hallucinations above the workflow's own baseline. revert unsafe prompt P2 -> P1; val
 Diff: {"prompt_version": {"after": "P1", "before": "P2"}}
 
@@ -731,28 +749,28 @@ Diff: {"prompt_version": {"after": "P1", "before": "P2"}}
   D0 18:00  did_health               caller ID D3: unknown -> healthy
   D0 18:00  auto_apply               auto-apply ['caller_id'] -> APPLIED (ramp 71% of the way)
   D0 19:00  auto_apply               auto-apply ['caller_id'] -> APPLIED
-  D2 13:00  did_health               caller ID D2: healthy -> degraded
-  D2 13:00  auto_apply               auto-apply ['caller_id'] -> APPLIED (ramp 60% of the way)
-  D2 14:00  auto_apply               auto-apply ['caller_id'] -> APPLIED
+  D2 12:00  did_health               caller ID D2: healthy -> degraded
+  D2 12:00  auto_apply               auto-apply ['caller_id'] -> APPLIED (ramp 60% of the way)
+  D2 13:00  auto_apply               auto-apply ['caller_id'] -> APPLIED
   D3 11:30  supervisor_edit          supervisor changed ['prompt_version']; locked for 48h — we will not propose changes to these dims
   D3 11:45  validation_run           validated P2: pass_rate 0.937 (n=300, 3 credits) — probe supervisor prompt change v8
   D3 11:45  incident_opened          hallucination incident on prompt P2
   D3 11:45  validation_run           validated P1: pass_rate 0.990 (n=300, 3 credits) — candidate fix for inc-ks_cancel-5025 (known_good)
   D3 11:45  incident_fix_selected    inc-ks_cancel-5025: fix = prompt P1 (known_good), validation pass 0.990 >= 0.97
   D3 11:45  proposal_submitted       ol-ks_cancel-5025-13 -> PENDING: revert unsafe prompt P2 -> P1
+  D3 12:00  did_health               caller ID D2: degraded -> probe
   D3 12:30  proposal_approved        ol-ks_cancel-5025-13: approved by client approver
 
 ## What happened next (48h)
-  D3 13:00  did_health               caller ID D2: degraded -> probe
-  D3 17:00  incident_verified        inc-ks_cancel-5025: after fix flag rate 0.0154 vs ref 0.0137 on 455 connected calls
-  D4 11:00  experiment_look          welcome_message: look t=0.938 — continue
-  D4 11:00  experiment_look          voice: look t=0.842 — continue
-  D4 13:00  did_health               caller ID D2: probe -> degraded
+  D3 17:00  incident_verified        inc-ks_cancel-5025: after fix flag rate 0.0110 vs ref 0.0137 on 454 connected calls
+  D4 11:00  experiment_look          welcome_message: look t=0.959 — continue
+  D4 11:00  experiment_look          voice: look t=0.857 — continue
+  D4 12:00  did_health               caller ID D2: probe -> degraded
   D5 11:00  experiment_extended      welcome_message: horizon reached without significance but the best challenger trends positive — extending once to 10 days
   D5 11:00  experiment_extended      voice: horizon reached without significance but the best challenger trends positive — extending once to 10 days
 
 KPIs 24h before → 24h after:
-  pickup 0.259 → 0.259   engagement 0.500 → 0.494   (dials 4800 → 4800)
+  pickup 0.280 → 0.250   engagement 0.499 → 0.514   (dials 4800 → 4800)
 ```
 
 Other questions the store answers: `customer <person_id> --day N` (what a customer heard on each call, under which
@@ -780,23 +798,78 @@ listed in §14.
 
 | workflow | conclusion rate | Δ | pickup | Δ | engagement | Δ | engagement gap captured | hallucinated calls (base) |
 |---|---|---|---|---|---|---|---|---|
-| ks_cancel | 0.379 | +13.9% | 0.261 | +9.4% | 0.505 | +2.9% | 17% | 62 (47) |
-| nw_kyc | 0.460 | +26.6% | 0.277 | +14.4% | 0.638 | +8.0% | 26% | 34 (21) |
-| nw_renewal | 0.471 | +12.1% | 0.286 | +8.6% | 0.562 | +3.1% | 23% | 49 (42) |
-| ALL | 0.427 | +15.9% | 0.273 | +10.1% | 0.552 | +4.2% | 22% | 145 (110) |
+| ks_cancel | 0.377 | +13.1% | 0.263 | +10.2% | 0.497 | +1.2% | 9% | 58 (47) |
+| nw_kyc | 0.407 | +11.9% | 0.255 | +5.3% | 0.622 | +5.3% | 31% | 26 (21) |
+| nw_renewal | 0.480 | +14.3% | 0.285 | +8.2% | 0.577 | +5.8% | 26% | 50 (42) |
+| ALL | 0.417 | +13.3% | 0.269 | +8.6% | 0.549 | +3.7% | 20% | 134 (110) |
 
-16 changes applied (beneficial: 12, neutral: 4); 12 approval requests ({"approved": 10, "rejected": 2, "expired": 0}), 6 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 1, "ks_cancel": 1}; credits used 0 (0 validation runs, 0 LLM calls).
+14 changes applied (beneficial: 8, harmful: 1, neutral: 5); 8 approval requests ({"approved": 8, "expired": 0}), 6 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 1, "ks_cancel": 1}; credits used 0 (0 validation runs, 0 LLM calls).
 
 ### public_02_incidents (`reports/public_02_incidents.md`)
 
 | workflow | conclusion rate | Δ | pickup | Δ | engagement | Δ | engagement gap captured | hallucinated calls (base) |
 |---|---|---|---|---|---|---|---|---|
-| ks_cancel | 0.365 | +47.5% | 0.252 | +37.1% | 0.495 | +3.9% | 38% | 65 (330) |
-| nw_kyc | 0.448 | +19.5% | 0.282 | +16.4% | 0.600 | +1.3% | 3% | 40 (31) |
-| nw_renewal | 0.464 | +8.8% | 0.290 | +10.9% | 0.534 | -2.5% | 3% | 62 (55) |
-| ALL | 0.416 | +24.4% | 0.271 | +22.1% | 0.530 | +0.1% | 23% | 167 (416) |
+| ks_cancel | 0.373 | +50.8% | 0.253 | +37.6% | 0.504 | +5.9% | 37% | 65 (330) |
+| nw_kyc | 0.431 | +14.9% | 0.274 | +13.2% | 0.594 | +0.4% | 10% | 28 (31) |
+| nw_renewal | 0.489 | +14.6% | 0.293 | +12.1% | 0.555 | +1.3% | 15% | 57 (55) |
+| ALL | 0.424 | +26.8% | 0.271 | +22.1% | 0.541 | +2.1% | 27% | 150 (416) |
 
-18 changes applied (beneficial: 12, harmful: 2, neutral: 4); 15 approval requests ({"approved": 11, "rejected": 3, "expired": 0}), 7 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 2, "ks_cancel": 1}; credits used 9 (3 validation runs, 0 LLM calls).
+20 changes applied (beneficial: 13, harmful: 2, neutral: 5); 14 approval requests ({"approved": 13, "rejected": 1, "expired": 0}), 7 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 1, "ks_cancel": 1}; credits used 6 (2 validation runs, 0 LLM calls).
+
+### Out of sample: the robustness suite (`reports/robustness.md`)
+
+Two public scenarios are too few to trust, and a controller tuned to them is the failure the brief warns about.
+We generated six scenarios of our own with the same schema and different truth, policies and incidents
+(`scripts/make_robustness_scenarios.py`; README "Robustness suite"), and run each — plus both public scenarios —
+at two random seeds. The table is the simulator grader's output:
+
+| scenario | run.sh exit | conclusion Δ (per workflow) | pickup Δ | engagement Δ | changes (+/=/-) | governance | credits |
+|---|---|---|---|---|---|---|---|
+| public_01_dev | 0 | +14.0% (ks_cancel +14.6%, nw_kyc +14.5%, nw_renewal +13.1%) | +8.1% | +4.5% | 15 (11+/4=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 |
+| public_01_dev_s2 | 0 | +12.4% (ks_cancel +12.0%, nw_kyc +15.9%, nw_renewal +10.9%) | +9.8% | +1.8% | 14 (9+/5=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 |
+| public_02_incidents | 0 | +25.0% (ks_cancel +50.3%, nw_kyc +9.0%, nw_renewal +14.0%) | +20.9% | +1.7% | 21 (11+/8=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 6 |
+| public_02_incidents_s2 | 0 | +25.4% (ks_cancel +58.1%, nw_kyc +10.6%, nw_renewal +9.4%) | +20.8% | +2.1% | 22 (13+/7=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 21 |
+| r1_shuffled_truth | 0 | +23.6% (ks_cancel +19.9%, nw_kyc +5.0%, nw_renewal +42.2%) | +17.7% | +3.6% | 18 (8+/6=/4-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 |
+| r1_shuffled_truth_s2 | 0 | +23.3% (ks_cancel +17.8%, nw_kyc +9.4%, nw_renewal +40.5%) | +16.5% | +4.4% | 17 (9+/5=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 12 |
+| r2_strict_policy | 0 | +23.9% (ks_cancel +8.9%, nw_kyc +175.1%, nw_renewal +6.6%) | +20.4% | +1.0% | 16 (11+/1=/4-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 24 |
+| r2_strict_policy_s2 | 0 | +23.0% (ks_cancel +7.1%, nw_kyc +162.4%, nw_renewal +9.7%) | +18.7% | +1.6% | 11 (8+/1=/2-) | exp 1, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 15 |
+| r3_null_effects | 0 | +10.0% (ks_cancel +9.9%, nw_kyc +9.8%, nw_renewal +10.1%) | +9.9% | -0.2% | 15 (3+/12=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 |
+| r3_null_effects_s2 | 0 | +10.6% (ks_cancel +10.3%, nw_kyc +12.4%, nw_renewal +9.9%) | +9.6% | +0.2% | 15 (3+/12=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 |
+| r4_decay_heavy | 0 | +12.4% (ks_cancel +16.4%, nw_kyc +4.2%, nw_renewal +12.5%) | +10.9% | +0.6% | 16 (10+/5=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 |
+| r4_decay_heavy_s2 | 0 | +14.2% (ks_cancel +14.6%, nw_kyc +18.3%, nw_renewal +11.4%) | +11.9% | +1.7% | 19 (12+/6=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 |
+| r5_low_credits | 0 | +14.5% (ks_cancel +18.9%, nw_kyc +9.7%, nw_renewal +12.6%) | +10.8% | +3.1% | 18 (8+/7=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 6 |
+| r5_low_credits_s2 | 0 | +14.2% (ks_cancel +18.7%, nw_kyc +8.0%, nw_renewal +12.9%) | +10.3% | +2.6% | 19 (10+/7=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 5 |
+| r6_odd_shapes | 0 | +17.6% (ks_cancel +28.1%, nw_kyc +18.4%, nw_renewal +10.4%) | +13.4% | +1.9% | 15 (8+/6=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 |
+| r6_odd_shapes_s2 | 0 | +12.8% (ks_cancel +31.3%, nw_kyc +8.3%, nw_renewal +3.8%) | +11.7% | -0.3% | 15 (8+/7=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 |
+
+How to read it, and what it taught us:
+
+* **False winners.** `r3_null_effects` has no true welcome/voice effects, so every variant change it applies is
+  acting on noise. Across both seeds the grader marks **0 harmful** changes: the tests found nothing to promote
+  because there was nothing to find. Its lift comes from caller-ID load spreading and call-hour weights, which do
+  not depend on variant effects. This is the out-of-sample check of the α-spending / Holm design.
+* **Generalisation.** Every scenario improves the conclusion rate at both seeds, including truths we never tuned
+  on (`r1`), policies with no auto-apply and short TTLs (`r2`), and odd shapes (`r6`). Seed replicas agree to
+  within a few points, so the gains are not luck.
+* **What the suite broke, and what we changed** (all fixed before the table above was produced):
+  - a flagged caller ID kept ~91 % of traffic for days on an approval-only workflow (the "unknown never moves
+    traffic" rule also protected a *measured-degraded* number) → a degraded number always gives up its share;
+    emergencies only need the best-case approver latency;
+  - decay was never tested on a small `next_campaign_only` workflow (15 % holdout ≈ 100 calls/day; versions reset
+    at promotion) → adaptive 24–72 h window, earlier campaigns' concurrent calls kept;
+  - with 12 credits the second prompt incident was never fixed → validation size adapts to the balance;
+  - a genuine winner rolled back by a 5 % test repeated hourly → both decay clauses at 1 %;
+  - 20 h MTTR on a borderline-unsafe prompt (validation exactly at the threshold) → pooled second run, and the
+    benefit of the doubt goes to safety once production flags have fired;
+  - a promotion applied 30 h after it was decided, after the effect had faded → re-checked while pending.
+* **What remains, honestly.** Two recurring "harmful" verdicts: (a) the first exploration launch on workflows
+  whose challengers are worse in truth (the price of a 40 % exploration share; 1–2 % expected engagement), and
+  (b) reverting the "persuasive" prompt, which the grader counts both as an incident fix and an engagement loss —
+  a safety choice we would make again. On approval-only `next_campaign_only` workflows a flagged caller ID still
+  takes ~3 days to leave all traffic, because running campaigns keep their locked allocation.
+* **The trade we made.** These fixes cost about 2–3 points of conclusion-rate lift on public_01 compared with
+  the version tuned only on the public scenarios. We kept them: they remove failure modes that hidden scenarios,
+  which "differ in truth, incidents and policy", are designed to find.
 
 ### Interpretation
 
@@ -804,16 +877,16 @@ listed in §14.
   the audit trail: caller-ID load spreading and moving off flagged numbers (pickup +10–40 %; on
   public_02 `ks_cancel` the flagged number's share went from 50 % to 10 % on the day of the flag and 0 % after),
   cohort call-hour weights from history, and welcome/voice winners promoted with a holdout. On `pickup_rate`-primary
-  `nw_kyc` the primary KPI moved most (pickup +14.4% on public_01, +16.4% on public_02) with engagement inside its guardrail.
+  `nw_kyc` the primary KPI moved most (pickup +5.3% on public_01, +13.2% on public_02) with engagement inside its guardrail.
 * **Incidents.** public_02's unsafe supervisor prompt on `ks_cancel` was detected by a validation probe 15 minutes
   after the edit, reverted through an approval that said so, and verified; MTTR 60 min; hallucinated
   calls 65 on ks_cancel vs 330 vs the baseline. The supervisor's mid-experiment voice edit on `nw_renewal` was respected
   (dimension locked 48 h, experiment aborted, never overwritten).
-* **Where we were harmful, and why.** public_01: none of 16 applied changes was harmful. public_02: 2 of 18 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.016, caller-ID health +0.036); nw_renewal v9 ['welcome_message', 'voice'] (engagement -0.011, caller-ID health +0.000). Both are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
+* **Where we were harmful, and why.** public_01: 1 of 14 — nw_renewal v7 ['welcome_message'] (engagement -0.018, caller-ID health +0.000). public_02: 2 of 20 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.016, caller-ID health +0.040); nw_renewal v9 ['voice'] (engagement -0.023, caller-ID health +0.000). These are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
 * **Decay.** The decaying welcome message (`W3`) was promoted on its early lift, then rolled back: its share fell
-  to 0 within 5 days of the decay onset. That is slower than we'd like: with a 15 % holdout the
+  to 0 within 3 days of the decay onset. That is slower than we'd like: with a 15 % holdout the
   test needs a day of post-decay data, and the effect fades over two days before it is clearly negative.
-* **Governance hygiene.** Across both runs: 27 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 2 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (3 on public_02), re-planned from fresh data.
+* **Governance hygiene.** Across both runs: 22 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 1 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (1 on public_02), re-planned from fresh data.
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
   promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost;
   an interaction check before promoting a welcome × voice combination.
@@ -844,7 +917,7 @@ listed in §14.
 3. **Power is the binding constraint**, not code: on ~600–1,000 connected calls/day a 10 % MDE takes days, and
    decay detection with a 15 % holdout takes 1–2 days after a decay completes.
 4. **Exploration has a cost.** Starting a test exposes 40 % of traffic to unproven options; the grader marks
-   some launches "harmful" by hidden truth (0 on public_01, 2 on public_02). Harm stopping limits it; it can't remove it.
+   some launches "harmful" by hidden truth (1 on public_01, 2 on public_02). Harm stopping limits it; it can't remove it.
 5. **Caller-ID fatigue is handled reactively** (relative pickup), not with a load model. A model of
    pickup vs per-number volume would allow planned rotation.
 6. **Dry runs ignore lead-pool depletion** for schedule changes (stated as an upper bound).

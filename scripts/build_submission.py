@@ -118,11 +118,12 @@ def main():
     _days = sorted(dec2.items(), key=lambda kv: int(kv[0]))
     decay_days = next((int(d) - int(_days[0][0]) for d, v in _days if v == 0), None)  # keys are sim days
     n1, n2 = g1["controller_changes"]["count"], g2["controller_changes"]["count"]
-    harm_explain = ("public_01: none of {n1} applied changes was harmful. public_02: {k} of {n2} — {lst}. Both are "
+    harm_explain = ("public_01: {k1} of {n1} — {lst1}. public_02: {k} of {n2} — {lst}. These are "
                     "experiment launches or arm changes whose exploration share landed on options the grader's hidden truth "
                     "rates as worse for that population; each was within 1–2 % of expected engagement, "
                     "and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at "
-                    "40 %; §13 lists how we'd cut it.").format(n1=n1, n2=n2, k=len(h2), lst="; ".join(h2) or "none")
+                    "40 %; §13 lists how we'd cut it.").format(n1=n1, n2=n2, k=len(h2), lst="; ".join(h2) or "none",
+                                                     k1=len(h1), lst1="; ".join(h1) or "none")
     gov_line = (f"Across both runs: {g1['governance']['approval_requests'] + g2['governance']['approval_requests']} "
                 f"approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, "
                 f"at most {max(list(g1['governance']['peak_requests_per_24h'].values()) + list(g2['governance']['peak_requests_per_24h'].values()))} "
@@ -133,6 +134,13 @@ def main():
 
     rb = (R / "robustness.md").read_text(encoding="utf-8") if (R / "robustness.md").exists() else ""
     robust_table = chr(10).join(l for l in rb.splitlines() if l.startswith("|")) or "(not run)"
+    _rows = [l for l in rb.splitlines() if l.startswith("| ") and not l.startswith("| scenario")]
+    _lifts = [float(m.group(1)) for l in _rows for m in [re.search(r"\| ([+-][\d.]+)% \(", l)] if m]
+    _null = [l for l in _rows if l.startswith("| r3_null")]
+    _null_harm = sum(int(re.search(r"/(\d+)-\)", l).group(1)) for l in _null) if _null else None
+    _ok = sum(1 for l in _rows if l.split("|")[2].strip() == "0")
+    robust_headline = (f"{_ok}/{len(_rows)} runs finished with run.sh exit 0; conclusion rate {min(_lifts):+.1f}% to {max(_lifts):+.1f}% vs "
+                       f"baseline; {_null_harm} harmful changes on the no-effects scenario" if _lifts else "not run")
     robust_notes = (D / "ROBUST_NOTES.md").read_text(encoding="utf-8").strip() if (D / "ROBUST_NOTES.md").exists() else ""
 
     # ---------------------------------------------------------------- stakeholder / assumption corrections
@@ -199,6 +207,7 @@ def main():
         "{{DECAY_EVIDENCE}}": f"(grader: share by day after onset {json.dumps(dec2)})",
         "{{TESTS}}": tests_line,
         "{{ROBUST_TABLE}}": robust_table, "{{ROBUST_NOTES}}": robust_notes,
+        "{{ROBUST_HEADLINE}}": robust_headline,
         "{{DATE}}": "2026-11-07", "{{NAME}}": "[YOUR NAME]", "{{HOURS}}": "[FILL IN]",
     }
     for k, v in fills.items():

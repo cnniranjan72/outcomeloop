@@ -105,6 +105,9 @@ itself restarts the controller if it exits abnormally.
   z < −1.645 keeps the incumbent via a per-cohort allocation; **stability check**: the last-24h lift must not be
   ≤ 0 or significantly below the whole-window lift (guards against promoting an effect that is already wearing
   off). Ties: highest 80 % lower confidence bound, then option order. No randomness anywhere in decisions.
+* **Fresh at apply time.** A promotion waiting on governance (approver latency, a stale base after a supervisor
+  edit, a rejection) is re-checked every tick and **withdrawn** if its effect has faded; the test continues. Our
+  strict-policy scenario showed a winner decided at D4 and applied 30 h later, after it had decayed.
 * **False-winner rate.** ≤ 5 % per (workflow, dimension) by construction (Holm × spending budget). Evidence from
   the runs: winners promoted on public_01/02 are listed in §11 with the grader's verdict.
 

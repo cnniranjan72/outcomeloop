@@ -12,7 +12,7 @@ latency/hours/TTL are published per workflow (submission timing can be computed,
 is strictly increasing and chunks stay re-listable (exactly-once ingestion via checkpoint-in-transaction).
 Baselines generated for all three public scenarios.
 
-**Milestone 1 — controller core** (`2bffba4`). SQLite store, chunk ingestion (~59k events/s on the dev box),
+**Milestone 1 — controller core** (`2bffba4`). SQLite store, chunk ingestion (~57k events/s on the dev box),
 shared cohort object bootstrapped from history, caller-ID and hallucination detectors, factorial
 welcome/voice experiments with O'Brien-Fleming spending and Holm, governance client with crash-safe
 reconcile, CLI views. First public_01 run: +12.3 % conclusion rate vs baseline, but 4 harmful changes.
@@ -53,9 +53,27 @@ materials. Load test on public_03.
   100 % of traffic concentrated on one number). Fixed with an own-history condition.
 - Further caller-ID fixes from public_01/02 audits: unknown health never moves traffic; 72 h healthy-only window
   for low-volume probes; re-probe evidence starts at the probe.
-- Load test (public_03, final code): ~59k events/s ingest, 70–79 s controller time per simulated day for 12
-  workflows, 490 MB peak memory. An hourly week-long scan had doubled decide time; cached per 6 sim-hours.
+- Load test (public_03, final code): ~57k events/s ingest, 69–91 s controller time per simulated day for 12
+  workflows, 491 MB peak memory. An hourly week-long scan had doubled decide time; cached per 6 sim-hours.
 
 **Final results** (committed reports): public_01 +15.5 % conclusion rate, 0 harmful of 19 changes; public_02
 +26.3 %, 2 harmful of 20 (small exploration costs), caller-ID incident off in ~2 h, unsafe prompt MTTR 60 min;
 crash recovery PASS (20 checks, 0 failed) with outcomes matching the uninterrupted run.
+
+## 2026-11-07 (evening) — out-of-sample hardening
+
+**Linux verified in Docker** (`python:3.12-slim`, 4 vCPU / 8 GB): public_01 and public_02 with `run.sh` exit 0.
+
+**Robustness suite** (`scripts/make_robustness_scenarios.py`, `scripts/robustness.sh`): six generated scenarios
+(shuffled truth, strict policy, null effects, heavy decay, low credits, odd shapes) × 2 seeds + both public
+scenarios, in parallel Linux containers or natively. It exposed and drove fixes for: a flagged caller ID kept at
+91 % on an approval-only workflow; decay never tested on a small `next_campaign_only` workflow; an unfixed second
+prompt incident at 12 credits; false decay rollbacks from a 5 % test repeated hourly; 20 h MTTR on a
+borderline-unsafe prompt; a promotion applied after its effect faded; a false withdrawal from a noisy hourly dip.
+Null-effect scenario: 0 harmful changes at both seeds.
+
+**Also:** paging rules as code (`outcomeloop alerts`), read-only HTTP views (`serve-views`), supervisor view in
+percentages, `run.sh` path portability (native path via `pwd -W`), review guide (`docs/REVIEW_GUIDE.md`).
+
+**Trade accepted:** ~2–3 points less public_01 lift than the public-only-tuned version, in exchange for the
+failure modes above.

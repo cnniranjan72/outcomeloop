@@ -86,8 +86,9 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
 * **False positives.** The flag detector is noisy. Our first version opened an incident on the production
   prompt from a QA-flag tail event and swapped in a "strict" script that cut engagement 14 %. Now an
   incident from flags alone needs **a second, independent signal** unless the production signal is overwhelming
-  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): a validation run of the live prompt must
-  fail the policy threshold. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
+  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): we validate the live prompt, and only a *clearly* safe result — at least
+  the threshold plus one standard error — vetoes the incident; a result inside the threshold's noise band gives
+  the benefit of the doubt to safety. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
   validation) ≈ 10⁻³ *(derived from the binomial at n=300)*, so a false prompt change is ~10⁻⁶ per look.
 * **Choosing a fix (LLM proposes, never decides).** Candidates in order: (1) prompts with ≥ 1,000 connected
   calls in our own history and a normal flag rate, ordered by observed engagement (validation says nothing about

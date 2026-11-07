@@ -19,6 +19,8 @@
   auto-apply; supervisor's unsafe prompt reverted through an approval with validation evidence (MTTR
   {{P02_MTTR}} min); {{P02_HARM}}.
 - Kill -9 at any point and it resumes ({{CRASH_SUMMARY}}); public_03 load: {{LOAD_SUMMARY}}.
+- Out of sample: six scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
+  × 2 seeds plus both public scenarios — {{ROBUST_HEADLINE}}.
 - Deliberately not built: per-person call time, LLM-driven anything beyond fix suggestions, fair-share across
   tenants (C15), a UI (the supervisor view is a CLI over the same store).
 
@@ -40,10 +42,10 @@
 | C8 | Hallucination incident response | **Built** | Safety in a regulated business; validation probe on supervisor edits, two-signal confirmation, known-good first then LLM, engagement-verified fix. | Prompt A/B is impossible (one prompt per workflow); a staged before/after design would be next. |
 | C9 | Governance client | **Built** | The non-negotiable boundary: state machine, batching, approver-hours timing with worst-case latency, fatigue with incident reserve, expiry = re-plan, stale = re-plan, auto-apply within policy and ramps. | Approver-attention budget shared across a tenant's workflows. |
 | C10 | Impact scores, affected leads, dry runs | **Built** (honest, simple) | Every proposal carries all four with their basis; dry runs replay our own calls and state their bias. | Calibrate impact score against realised lift. |
-| C11 | Supervisor view | **Partial** (CLI) | `python -m outcomeloop supervisor <wf>`: tested / winning / waiting for you / changed today / incidents, from the same store. | Same queries behind an HTTP endpoint and a weekly summary. |
+| C11 | Supervisor view | **Built** (CLI + read-only HTTP) | `python -m outcomeloop supervisor <wf>` and `serve-views` (`/supervisor/<wf>`): tested / winning / waiting for you / changed today / incidents, from the same store as everything else. | A weekly summary for Compliance generated from the decision log. |
 | C12 | Queryable audit store | **Built** | `decisions` is append-only (DB triggers); `why <wf> --at <t>` and `customer <person>` answer the review's question from our store. | — |
 | C13 | Crash recovery, demonstrated | **Built** | SRE's non-negotiable; `scripts/crash_recovery.sh` kills with SIGKILL/TerminateProcess at several points and verifies. | — |
-| C14 | Observability of the loop | **Partial** | `metrics` table (ingest events/s, lag, per-tick decide/advance time, credits, open proposals, memory) and `status` CLI; alerts are audit rows, not wired to a pager. | Export to the platform's metrics stack and pager with the thresholds in §10. |
+| C14 | Observability of the loop | **Partial** | `metrics` table (ingest events/s, lag, per-tick decide/advance time, credits, open proposals, memory), `status`, and `alerts`, which evaluates the paging rules of §10 from the store and exits non-zero when one fires (cron/pager-ready). | Export to the platform's metrics stack; wire `alerts` to the pager. |
 | C15 | Fair credits / attention across tenants | **Cut** | Public scenarios use ~0–10 % of credits; fatigue is per workflow already. Building fair-share without contention data would be guesswork. | Per-tenant credit and request budgets with priority by impact score. |
 
 **Principle.** Build whatever the hidden-scenario score and the governance boundary can't do without (ingestion,
