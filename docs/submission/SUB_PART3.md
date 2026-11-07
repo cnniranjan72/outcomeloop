@@ -88,14 +88,21 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
 ### Hallucination (C8)
 * **Detection.** QA-flag rate on the live prompt (since its last change, ≤ 24 h) vs the workflow's own
   history rate; fires at rate > 1.5× reference, z > 3.5, ≥ 250 connected calls. A supervisor prompt edit also
-  triggers an immediate **validation probe** of the new prompt (300 synthetic calls, 3 credits): the earliest
-  population-level evidence, available before enough real calls accrue.
+  triggers an immediate **validation probe** of the new prompt (300 synthetic calls, 3 credits; 100 calls / 1 credit
+  when credits are scarce, run while ≥ 4 credits remain): the earliest population-level evidence. A new prompt must
+  *demonstrate* it clears the approver's own gate — the exact 95 % upper bound on its failure rate within
+  1 − `min_validation_pass_rate` (`stats.validation_vetoes`). Below the gate → incident. Passing on the point
+  estimate but not with confidence → a second run, pooled (credits ≥ 30); still not shown → incident. (A 2.5 %-
+  hallucination prompt passes one 300-call run 78 % of the time; with a point-estimate probe it ran for a day
+  before the flag detector caught up — robustness r1/r5, second seeds.)
 * **False positives.** The flag detector is noisy. Our first version opened an incident on the production
   prompt from a QA-flag tail event and swapped in a "strict" script that cut engagement 14 %. Now an
   incident from flags alone needs **a second, independent signal** unless the production signal is overwhelming
-  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): we validate the live prompt, and only a *clearly* safe result — at least
-  the threshold plus one standard error — vetoes the incident; a result inside the threshold's noise band gives
-  the benefit of the doubt to safety. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
+  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): we validate the live prompt. For a prompt changed in the last 3 days the
+  validation vetoes only if it demonstrates safety (the same 95 % bound; one failure in 100 cannot show < 3 %, so a
+  small run no longer overrules hundreds of production calls — robustness r5: 51 h MTTR before). For the
+  long-standing reference prompt only a clearly safe result — threshold plus one standard error — vetoes, because a
+  spike on the prompt that defines the baseline is more often noise and "fixing" it costs engagement. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
   validation) ≈ 10⁻³ *(derived from the binomial at n=300)*, so a false prompt change is ~10⁻⁶ per look.
 * **Choosing a fix (LLM proposes, never decides).** Candidates in order: (1) prompts with ≥ 1,000 connected
   calls in our own history and a normal flag rate, ordered by observed engagement (validation says nothing about
@@ -109,6 +116,10 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
   "nobody hallucinated, nobody stayed") is marked harmful and the next candidate is tried.
 * **Credits.** 40 % of the starting budget is reserved for incidents; routine work cannot spend it (routine
   work currently spends nothing). Credits used: public_01 {{CRED01}}, public_02 {{CRED02}} of 200.
+  One pool serves every tenant (C15): a work-conserving fair share refuses a tenant (audited `hold`) only while
+  another tenant has an open incident and it has used more than its equal share of the starting budget; with no
+  contention it never blocks. `r7_credit_contention` (10 credits, two tenants ship an unsafe prompt the same morning):
+  both incidents fixed, 120 and 210 min, 4 credits used.
 
 ### Caller-ID incident (C5) — see §5. Detection uses a 6 h window so a flag is visible within ~2 h of dialling.
 

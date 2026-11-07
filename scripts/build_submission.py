@@ -87,6 +87,14 @@ def main():
     ncalls = int(calls.replace(",", "")) if calls != "n/a" else 1
     bpe = mb * 2 ** 20 / ncalls if ncalls else 0
     machine = re.search(r"^Machine: (.*)$", load, re.M).group(1)
+    # container-capped figures (grader spec, 4 vCPU / 8 GB) from reports/scaling.md, quoted beside the laptop run
+    scal = (ROOT / "reports" / "scaling.md").read_text(encoding="utf-8") if (ROOT / "reports" / "scaling.md").exists() else ""
+    m1 = re.search(r"\*\*controller seconds per simulated day\*\* \| \*\*([\d.]+) / ([\d.]+)\*\*", scal)
+    m2 = re.search(r"\| live ingest throughput \| ([\d,]+) events/s", scal)
+    _c = sorted({f"{float(m1.group(1)):.0f}", f"{float(m1.group(2)):.0f}"}, key=float) if m1 else []
+    cont = (f"; in a 4 vCPU / 8 GB container (grader spec): {'–'.join(_c)} s per simulated"
+            f" day, {m2.group(1)} events/s live (`reports/scaling.md`)") if m1 and m2 else ""
+    slow = " (laptop run on a host ~2× slower than usual that day)" if "2x slower" in load else ""
     load_table = "\n".join([
         f"| history backlog ingested before D0 | {hist} |",
         f"| live ingest (D0–end) | {live} |",
@@ -163,7 +171,7 @@ def main():
                     f"(`reports/public_03.md`).")
     sh = sh.replace("*Breaks at 10×.* `[MEASURED: see reports/public_03.md]`",
                     "*Breaks at 10×.* Per-tick decision queries over raw rows first, then the single writer (§8).")
-    sh = sh.replace("[MEASURED: see reports/public_03.md]", f"ingest {eps} events/s, {ctrl_day} of controller time per simulated day, {rss} peak memory")
+    sh = sh.replace("[MEASURED: see reports/public_03.md]", f"ingest {eps} events/s, {ctrl_day} of controller time per simulated day{slow}{cont}, {rss} peak memory")
     sh = sh.replace("`[RESULT: credits used on public_01/02]`",
                     f"Credits used: {g1['credits_used']:.0f} on public_01, {g2['credits_used']:.0f} on public_02, of 200.")
     sh = sh.replace("`[RESULT: docs link]`", "(`docs/OPERATIONS.md`)")
@@ -193,7 +201,7 @@ def main():
         "{{P01_HARM}}": f"{len(h1)} harmful of {n1} applied changes",
         "{{P02_HARM}}": f"{len(h2)} harmful of {n2} applied (both small exploration costs, §11)" if len(h2) == 2 else f"{len(h2)} harmful of {n2} applied",
         "{{CRASH_SUMMARY}}": f"9 hard kills on public_02; verification {crash_line}",
-        "{{LOAD_SUMMARY}}": f"{eps} events/s ingest, {ctrl_day} of controller time per simulated day for 12 workflows, {rss} peak memory",
+        "{{LOAD_SUMMARY}}": f"{eps} events/s ingest, {ctrl_day} of controller time per simulated day for 12 workflows{slow}{cont}, {rss} peak memory",
         "{{LOAD_MACHINE}}": machine, "{{LOAD_TABLE}}": load_table, "{{LOAD_TICK}}": tick, "{{LOAD_CTRL_DAY}}": ctrl_day,
         "{{LOAD_BYTES_PER_EVENT}}": f"{bpe:.0f}", "{{LOAD_GB_MONTH}}": f"{gb_month:.0f}",
         "{{CRASH_LINE}}": crash_line, "{{CRASH_OUTCOME}}": crash_outcome, "{{WHY_OUTPUT}}": why_trim,

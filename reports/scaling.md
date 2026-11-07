@@ -66,3 +66,25 @@ time). The largest single item in the profile was deep-copying a ~200 KB config 
 4. *Approver attention, not compute,* limits how many changes 120 workflows can get per day (fatigue caps).
 
 Faster JSON (orjson) would cut the parse share but adds a dependency to the audited lock file; it is listed, not done.
+
+## Sharding prototype (measured): ingest split across processes by workflow
+
+`scripts/bench_shards.py`: N processes each ingest only their workflows (`shard_of` = sha256(workflow_id) mod N) from the
+first 8 public_03 history chunks (2,000,000 events) of one running simulator, each into its own store, all at once.
+A shard pre-filters raw lines by `workflow_id` before JSON parsing (`Ingestor(workflows=...)`), so it parses only its own
+events. Same 12-CPU laptop and host conditions as the final load run.
+
+| shards | wall s | per-shard s (workflows) | events/s (aggregate) | speed-up | call rows |
+|---|---|---|---|---|---|
+| 1 | 81.7 | 80.32 (12) | 24,489 | 1.00× | 1,423,964 same |
+| 2 | 58.0 | 42.34 (5), 56.35 (7) | 34,501 | 1.41× | 1,423,964 same |
+| 4 | 53.4 | 37.80 (2), 51.84 (4), 45.28 (3), 45.51 (3) | 37,423 | 1.53× | 1,423,964 same |
+
+* **Correct:** the shards together stored exactly the rows one process stores (1,423,964 call rows) at every N.
+* **Faster, but sub-linear:** 1.41× with 2 shards, 1.53× with 4. Two measured reasons: every shard still downloads the
+  whole chunk from one simulator process and scans every line, and workflows are coarse (12 here, so 4 shards split them
+  2/4/3/3 and the slowest shard sets the wall time). The production shape is one reader per stream fanning out raw
+  lines (or the dialler partitioning its event stream by workflow), and many more workflows than shards.
+* **Not wired into `run.sh`:** the controller has one clock (`/sim/advance`) and one credit pool. A sharded deployment
+  needs a coordinator that advances time once every shard has finished its tick, and a shared credit ledger (the fair-
+  share rule already exists). This prototype measures the part that breaks first; it is not a claim that 10× is solved.

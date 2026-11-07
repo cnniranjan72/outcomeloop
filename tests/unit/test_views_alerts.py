@@ -64,3 +64,14 @@ def test_customer_view_names_what_was_heard_and_who_set_it(db):
     person = db.q1("SELECT person FROM calls")[0]
     out = views.customer(db, f"wfA:p{person}", None)
     assert "heard W1 V3 P1 from D1" in out and "engaged" in out and "by controller_approved · ol-1 · apr_1" in out
+
+
+def test_customer_view_labels_a_supervisor_edit_as_outside_governance(db):
+    from helpers import add_calls
+    db.x("INSERT INTO workflows (wf, workflow_id) VALUES (5, 'wfS')")
+    db.x("INSERT INTO config_versions (wf, version, actor, minute, changed_dims, proposal_id, approval_id, event_id)"
+         " VALUES (5,2,'supervisor',0,'[\"prompt_version\"]',NULL,NULL,9)")
+    add_calls(db, 5, 1, 1, 0, minute=600, prompt="P2", cfg_ver=2)
+    person = db.q1("SELECT person FROM calls WHERE wf=5")[0]
+    out = views.customer(db, f"wfS:p{person}", None)
+    assert "by supervisor (direct edit, outside governance)" in out and "None" not in out

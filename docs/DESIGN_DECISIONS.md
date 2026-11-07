@@ -141,7 +141,12 @@ penalty outside the preferred hour makes errors expensive): it runs as a randomi
 
 ## 8. Incidents — hallucination (C8)
 
-1. Detector fires (or a supervisor changes `prompt_version` → validation probe of the new prompt, 3 credits).
+1. Detector fires (or a supervisor changes `prompt_version` → validation probe of the new prompt, 3 credits; 1 when
+   credits are scarce, from 4 credits). A new prompt must *demonstrate* it clears the approver's gate (exact 95 %
+   upper bound on its failure rate ≤ 1 − `min_validation_pass_rate`, `stats.validation_vetoes`): below the gate →
+   incident; passing only on the point estimate → a pooled second run (credits ≥ 30); still not shown → incident.
+   A flag-triggered incident needs a confirming validation; for a prompt changed in the last 3 days it vetoes only
+   with the same 95 % bound, for the long-standing reference prompt with threshold + 1 SE.
 2. Candidates: prompts from our own history with ≥ 1000 connected calls and a flag rate ≤ 1.25× the reference,
    ordered by observed engagement (validation measures safety only),
    first; LLM `suggest-fixes` only if no known-good candidate passes validation (CTO: no compute that

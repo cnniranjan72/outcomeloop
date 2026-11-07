@@ -184,8 +184,9 @@ Unix seconds. `wf` is the integer code of a workflow id. Option and feature colu
    state machine (healthy / degraded / probe, rest doubling, 24 h probe box). It writes a `did_health` decision
    per transition. If any number became degraded, the workflow is marked as an emergency.
 2. **`detect_halluc`:**
-   - If a supervisor prompt probe is queued and that prompt is still live, it validates the prompt. A failed
-     validation opens an incident.
+   - If a supervisor prompt probe is queued and that prompt is still live, it validates the prompt. Below the
+     approver's gate opens an incident; passing only on the point estimate (95 % bound above the limit) buys a
+     pooled second run when credits allow, and an incident if that still does not show the prompt clears the gate.
    - It computes `halluc_spike` since the last prompt change (at most 24 h). If the detector fired, no incident is
      open, and the prompt is not muted, it opens an incident.
    - It then advances the open incident:

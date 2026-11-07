@@ -204,7 +204,16 @@ def customer(db: DB, person_id: str, day: int | None) -> str:
     for m, ver, coh, wm, vo, did, pr, conn, eng in db.q(sql + " ORDER BY minute", args):
         v = db.q1("SELECT actor, proposal_id, approval_id FROM config_versions WHERE wf=? AND version=?", (wf, ver))
         outcome = "engaged" if eng else ("connected" if conn else "no answer")
-        who = (f"by {v[0]} · {v[1]}" + (f" · {v[2]}" if v[2] else " · auto route") if v else "business default")
+        if not v:
+            who = "business default"
+        elif v[0] == "supervisor":
+            who = "by supervisor (direct edit, outside governance)"
+        elif v[0] == "controller_approved":
+            who = f"by controller_approved · {v[1]} · {v[2]}"
+        elif v[0] == "controller_auto":
+            who = f"by controller_auto · {v[1]} · auto route (policy)"
+        else:
+            who = f"by {v[0]}"
         out.append(f"{minute_to_label(m)}  {db.decode('cohort', coh)}  heard {db.decode('welcome_message', wm)}"
                    f" {db.decode('voice', vo)} {db.decode('prompt_version', pr)} from {db.decode('caller_id', did)}"
                    f"  {outcome:<9}  config v{ver} {who}")

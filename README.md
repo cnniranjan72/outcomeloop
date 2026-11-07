@@ -13,14 +13,15 @@ the simulator.
 
 | Headline (from `reports/`) | Value |
 |---|---|
-| public_01 conclusion-rate lift vs no-op baseline, all workflows | `+12.5%` |
-| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+24.6%` |
-| public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `105 min` |
-| public_03 ingest throughput | `~41,000` events/s |
-| public_03 controller seconds per simulated day (ingest + decide) | `42–53 s` |
+| public_01 conclusion-rate lift vs no-op baseline, all workflows | `+15.3%` (0 harmful changes of 26) |
+| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+26.4%` (2 harmful of 31) |
+| public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `135 min` (detected in 15 min; the rest is approver latency) |
+| public_03 ingest throughput (4 vCPU / 8 GB container) | `~47,000` history, `~39,000` live events/s (`reports/scaling.md`) |
+| public_03 controller seconds per simulated day (container, 1×) | `49 s` (SRE target 600 s; ≈ 460 s *projected* at 10×) |
 | public_03 peak controller memory | `361 MB` (was 1,046 MB; `reports/memory.md`) |
-| Unit tests | `199 (197 unit + 2 slow integration)` |
+| Tests | `222` (220 unit + 2 slow integration) |
 | Crash-recovery run (kill / restart / verify) | `9 hard kills, 20 verification checks, 0 failed` |
+| Robustness suite (7 generated scenarios × 2 seeds + 2 public seeds) | `16/16` pass, 0 decision errors, 0 false winners in 15 null experiments |
 
 The full figures are in `reports/public_01_dev.md`, `reports/public_02_incidents.md`, `reports/public_03.md`,
 `reports/crash_recovery_timeline.json` and `reports/crash_public_02_grade.md`. Reasoning, stakeholder replies
@@ -143,7 +144,7 @@ Status comes from the code in `src/outcomeloop/`, not from intent.
 | C12 | Queryable decision/audit store | **Built** | `decisions` table with UPDATE/DELETE blocked by triggers. CLI commands `why`, `audit`, `customer`. |
 | C13 | Crash recovery, demonstrated | **Built** | Intent rows before HTTP, reconcile on start, `run.sh` restart loop. `scripts/crash_recovery.sh` hard-kills at 9 state-targeted moments and verifies. |
 | C14 | Observability of the loop | **Partial** | `metrics` table, `status`, and `alerts` (paging rules evaluated from the store, exit 1 when one fires — cron/pager-ready). Not wired to a real pager. |
-| C15 | Fair credits / attention across tenants | **Cut** | Fatigue caps are per workflow. The credit reserve is global. There is no cross-tenant budget. |
+| C15 | Fair credits / attention across tenants | **Built (minimal)** | `fair_share_ok`: one credit pool, work-conserving fair share — a tenant waits (audited `hold`) only while another tenant has an open incident and it has used more than its equal share. Approver attention is per workflow (own approver, own fatigue cap). Exercised by `r7_credit_contention`. |
 
 ## Architecture
 
@@ -997,8 +998,10 @@ and no pager is connected. The table below is the policy we recommend for produc
 Measured on `public_03_load` (12 workflows, about 650k dials/day, about 850k events/day). All numbers come from
 `reports/public_03.md`, which `scripts/load_report.py` builds from our own `metrics` and `chunks` tables:
 
-- ingest throughput: `~41,000` events/s
-- controller time per simulated day (ingest + decide): `42–53 s`. The SRE target is under 600 s.
+- ingest throughput: `~47,000` history / `~39,000` live events/s in a 4 vCPU / 8 GB container (`reports/scaling.md`);
+  the final laptop run (`reports/public_03.md`) ran on a host about 2× slower than usual (the simulator itself took
+  39–47 s per day vs 16–26 s before) and reports 25k / 22k events/s.
+- controller time per simulated day (ingest + decide): `49 s` in the container at 1×. The SRE target is under 600 s.
 - peak memory: `361 MB` (was 1,046 MB before the streaming-ingest fix; `reports/memory.md`)
 
 The report also gives per-tick p50/p95/max controller time, maximum ingest lag, DB size and the per-day table.

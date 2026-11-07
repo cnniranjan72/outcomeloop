@@ -3,7 +3,7 @@ How to read it, and what it taught us:
 * **False winners — measured, not inferred.** `r3_null_effects` has no true welcome/voice effects, so every
   experiment winner there is a false winner. The grader's "0 harmful" on it is weak evidence (a null variant change
   is neutral by construction), so the table counts winners from our own audit store. **Final code: 0 winners in
-  16 null experiments** across the two seeds. On the code before the adversarial audit it was 2 in 16 (still
+  15 null experiments** across the two seeds (0 in 16 on the previous evidence run). On the code before the adversarial audit it was 2 in 16 (still
   consistent with the ≤ 5 % bound: P ≈ 0.19 of ≥ 2) — one of them came through the cohort-level family, which was
   re-spending the look's α (fixed: 80/20 split), and the pooled one was later rolled back by the holdout decay
   test. 0/16 is consistent with the bound, not proof of a lower rate.
@@ -21,6 +21,16 @@ How to read it, and what it taught us:
   - 20 h MTTR on a borderline-unsafe prompt (validation exactly at the threshold) → pooled second run, and the
     benefit of the doubt goes to safety once production flags have fired;
   - a promotion applied 30 h after it was decided, after the effect had faded → re-checked while pending.
+  - a borderline-unsafe prompt (2.5 % hallucination) with 12 credits took 51 h to fix: a 100-call validation with one
+    failure vetoed hundreds of production calls, and the supervisor-prompt probe was skipped below 10 credits → a
+    validation must *demonstrate* the prompt clears the approver's gate (exact 95 % bound) before it overrules a
+    production alarm on a fresh prompt or lets a probe pass; probe from 4 credits, pooled second run;
+  - a dropped (significantly worse) challenger's traffic was spread over the other unproven challengers → it goes
+    back to the incumbent;
+  - the first incident × variant analysis reported two interactions the truth does not contain → comparison group
+    limited to options present in both windows, only the QA flag rate can raise one.
+  Paired A/B of the last three against the previous evidence code over the same 14 runs: harmful changes −8,
+  incident MTTR −24 % (7,920 → 6,030 min summed), conclusion-rate lift unchanged (−0.06 pp, SE 0.43), 0 errors.
 * **What remains, honestly.** Two recurring "harmful" verdicts: (a) the first exploration launch on workflows
   whose challengers are worse in truth (the price of a 40 % exploration share; 1–2 % expected engagement), and
   (b) reverting the "persuasive" prompt, which the grader counts both as an incident fix and an engagement loss —

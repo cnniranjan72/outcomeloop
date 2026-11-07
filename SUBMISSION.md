@@ -14,13 +14,13 @@
   shared cohort object per workflow, detects caller-ID and hallucination incidents on populations, runs
   factorial welcome × voice experiments with a sequential test that controls the false-winner rate, and routes
   every change through governance with one batched proposal per workflow.
-- **public_01:** conclusion rate +12.5% vs the no-op baseline (primary KPI: nw_renewal -0.1%, nw_kyc +7.5%, ks_cancel +2.8%), 0 harmful of 25 applied changes.
-- **public_02:** conclusion rate +24.6%; spam-flagged caller ID moved off within ~2 h by policy-permitted
+- **public_01:** conclusion rate +15.3% vs the no-op baseline (primary KPI: nw_renewal +2.8%, nw_kyc +13.0%, ks_cancel +2.3%), 0 harmful of 26 applied changes.
+- **public_02:** conclusion rate +26.4%; spam-flagged caller ID moved off within ~2 h by policy-permitted
   auto-apply; supervisor's unsafe prompt reverted through an approval with validation evidence (MTTR
-  105 min); 3 harmful of 28 applied.
-- Kill -9 at any point and it resumes (9 hard kills on public_02; verification PASS: 20 checks, 0 failed); public_03 load: 40,806 events/s ingest, 42–53 s of controller time per simulated day for 12 workflows, 1046 MB peak memory.
+  135 min); 2 harmful of 31 applied (both small exploration costs, §11).
+- Kill -9 at any point and it resumes (9 hard kills on public_02; verification PASS: 20 checks, 0 failed); public_03 load: 21,609 events/s ingest, 73–108 s of controller time per simulated day for 12 workflows (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory.
 - Out of sample: six scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
-  × 2 seeds plus both public scenarios — 16/16 runs finished with run.sh exit 0; conclusion rate +9.0% to +25.7% vs baseline; 0 false winners in 16 experiments on the no-effects scenario (§11).
+  × 2 seeds plus both public scenarios — 16/16 runs finished with run.sh exit 0; conclusion rate +9.7% to +23.6% vs baseline; 0 false winners in 15 experiments on the no-effects scenario (§11).
 - Deliberately not built: LLM-driven anything beyond fix suggestions, fair-share across
   tenants (C15), a UI (the supervisor view is a CLI over the same store).
 
@@ -103,7 +103,7 @@
 | C12 | Queryable audit store | **Built** | `decisions` is append-only (DB triggers); `why <wf> --at <t>` and `customer <person>` answer the review's question from our store. | — |
 | C13 | Crash recovery, demonstrated | **Built** | SRE's non-negotiable; `scripts/crash_recovery.sh` kills with SIGKILL/TerminateProcess at several points and verifies. | — |
 | C14 | Observability of the loop | **Partial** | `metrics` table (ingest events/s, lag, per-tick decide/advance time, credits, open proposals, memory), `status`, and `alerts`, which evaluates the paging rules of §10 from the store and exits non-zero when one fires (cron/pager-ready). | Export to the platform's metrics stack; wire `alerts` to the pager. |
-| C15 | Fair credits / attention across tenants | **Cut** | Public scenarios use ~0–10 % of credits; fatigue is per workflow already. Building fair-share without contention data would be guesswork. | Per-tenant credit and request budgets with priority by impact score. |
+| C15 | Fair credits / attention across tenants | **Built (minimal)** | One credit pool for all tenants; a work-conserving fair share: a tenant is refused (audited `hold`) only while *another* tenant has an open incident and it has already used more than its equal share of the starting budget, so with no contention it never blocks anything. Approver attention is per workflow (each has its own approver and fatigue cap). Robustness scenario `r7_credit_contention` exercises it. | Weight shares by tenant contract tier; priority by impact score inside a tenant. |
 
 **Principle.** Build whatever the hidden-scenario score and the governance boundary can't do without (ingestion,
 governance, statistical experimentation, the two incident types, crash safety, audit) properly and with tests;
@@ -117,7 +117,7 @@ stub.
 
 - **Accepted.**
   - Show a lift figure per workflow: the primary KPI versus baseline with its confidence interval, and the
-    guardrail beside it. Source: `sim grade` reports and our audit store. (public_01 conclusion rate +12.5%, public_02 +24.6% vs the no-op baseline; per workflow in §11)
+    guardrail beside it. Source: `sim grade` reports and our audit store. (public_01 conclusion rate +15.3%, public_02 +26.4% vs the no-op baseline; per workflow in §11)
   - Fewer, bigger requests: one open proposal per workflow carries the whole batched changeset (proposal state
     machine, §6).
   - Speed where the policy allows it: caller-ID rotation and schedule changes auto-apply on `nw_renewal`
@@ -229,7 +229,7 @@ stub.
     - **Don't page on:** KPI drift and caller-ID degradation; these go to the supervisor view.
   - *Loop health without logs.* The `metrics` table records ingest lag, events/s, decisions per hour, credit
     burn and backlog, readable from the CLI. (`python -m outcomeloop status`)
-  - *< 10 min per simulated day on `public_03_load`.* Our share is 42–53 s per simulated day (`reports/public_03.md`).
+  - *< 10 min per simulated day on `public_03_load`.* Our share is 73–108 s per simulated day (`reports/public_03.md`).
   - *Breaks at 10×.* Per-tick decision queries over raw rows first, then the single writer (§8).
 - **Pushed back / declined.**
   - *Redis is not used.* There is no queue or cache to share in a single-process loop.
@@ -247,7 +247,7 @@ stub.
   > approvals. Idempotency comes from transactional checkpoints and proposal IDs persisted before any call.
   > Pages fire only for stalled ingest, credits near the incident reserve, an approval about to lapse, or a
   > crash loop. KPI drift waits for morning. Load numbers and the 10× breakpoint:
-  > ingest 40,806 events/s, 42–53 s of controller time per simulated day, 1046 MB peak memory.
+  > ingest 21,609 events/s, 73–108 s of controller time per simulated day (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory.
 
 ### 04 — Anita Desai, Operations Supervisor, Kestrel Finance
 
@@ -350,8 +350,8 @@ stub.
     - Incident fixes try our own last known-good prompt before calling `suggest-fixes`.
     - Validation runs at n = 300 (3 credits).
     - An LLM never chooses a winner.
-    - 40 % of credits is an incident reserve. Credits used: 3 on public_01, 6 on public_02, of 200.
-  - *Scale.* Transactional, idempotent chunk ingestion. `ingest 40,806 events/s, 42–53 s of controller time per simulated day, 1046 MB peak memory` We state what
+    - 40 % of credits is an incident reserve. Credits used: 0 on public_01, 6 on public_02, of 200.
+  - *Scale.* Transactional, idempotent chunk ingestion. `ingest 21,609 events/s, 73–108 s of controller time per simulated day (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory` We state what
     breaks first at 10× and how we'd partition by tenant and workflow.
   - *Choosing.* Per-person call time ships as an experiment rather than a rollout; the cuts in §2 each have a
     drafted message.
@@ -373,7 +373,7 @@ stub.
   > caller-ID health, hallucination response, and a full audit trail. Per-person call time runs as an experiment, and the cuts
   > are listed with reasons and drafted messages to the people affected. Every change on a client agent can be
   > explained from our own store in one command. Credits go first to known-good fixes, and 40 % is reserved for
-  > incidents. On scale: ingest 40,806 events/s, 42–53 s of controller time per simulated day, 1046 MB peak memory. The first bottleneck at 10× isn't compute but
+  > incidents. On scale: ingest 21,609 events/s, 73–108 s of controller time per simulated day (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory. The first bottleneck at 10× isn't compute but
   > approver capacity at 2–4 requests per workflow per day. I've designed around that with batching. Three
   > memos contained claims the policies contradict; I followed the policies.
 
@@ -509,7 +509,7 @@ itself restarts the controller if it exits abnormally.
   allocation count: they are concurrent, randomised comparisons of the same arms.
 * Rollback = proposal back to the holdout option; the decayed option is blacklisted for 7 days.
 * How fast: the share of in-population calls still on the decaying `W3` after its decay onset, by simulated day,
-  from the grader (grader: share by day after onset {"2": 0.192, "3": 0.734, "4": 0.429, "5": 0.0, "6": 0.0, "7": 0.0, "8": 0.0, "9": 0.0}) — typically 2–4 days from onset to 0 %. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
+  from the grader (grader: share by day after onset {"2": 0.857, "3": 0.849, "4": 0.503, "5": 0.0, "6": 0.0, "7": 0.0, "8": 0.0, "9": 0.0}) — typically 2–4 days from onset to 0 %. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
 
 ### Call time and caller ID (C4, C5)
 * **History (C3).** 14 days (7 on load) of calls under the business default give per-cohort hour-of-day pickup
@@ -601,7 +601,7 @@ the next plan starts from fresh data and the new base (Product: expired = reject
   (latency up to 8 h, hours 10–18) that means early in the day.
 * **Fatigue.** Trailing-24h count of every request (rejected and expired count too) < `min(policy, tenant
   preference)`, with **one slot reserved for incidents**. Effect: ≤ 1 routine request/day on `ks_cancel` and
-  `nw_kyc`, ≤ 2 on `nw_renewal`. Peak requests/24h on the public runs: public_01 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}, public_02 {'nw_renewal': 2, 'nw_kyc': 1, 'ks_cancel': 1}.
+  `nw_kyc`, ≤ 2 on `nw_renewal`. Peak requests/24h on the public runs: public_01 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}, public_02 {'nw_renewal': 2, 'nw_kyc': 1, 'ks_cancel': 2}.
 * **Apply window.** We poll every 15 simulated minutes, so an approval is applied within one tick (2 h window).
   Lapsed approvals on the public runs: 0 and 0.
 
@@ -641,14 +641,21 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
 ### Hallucination (C8)
 * **Detection.** QA-flag rate on the live prompt (since its last change, ≤ 24 h) vs the workflow's own
   history rate; fires at rate > 1.5× reference, z > 3.5, ≥ 250 connected calls. A supervisor prompt edit also
-  triggers an immediate **validation probe** of the new prompt (300 synthetic calls, 3 credits): the earliest
-  population-level evidence, available before enough real calls accrue.
+  triggers an immediate **validation probe** of the new prompt (300 synthetic calls, 3 credits; 100 calls / 1 credit
+  when credits are scarce, run while ≥ 4 credits remain): the earliest population-level evidence. A new prompt must
+  *demonstrate* it clears the approver's own gate — the exact 95 % upper bound on its failure rate within
+  1 − `min_validation_pass_rate` (`stats.validation_vetoes`). Below the gate → incident. Passing on the point
+  estimate but not with confidence → a second run, pooled (credits ≥ 30); still not shown → incident. (A 2.5 %-
+  hallucination prompt passes one 300-call run 78 % of the time; with a point-estimate probe it ran for a day
+  before the flag detector caught up — robustness r1/r5, second seeds.)
 * **False positives.** The flag detector is noisy. Our first version opened an incident on the production
   prompt from a QA-flag tail event and swapped in a "strict" script that cut engagement 14 %. Now an
   incident from flags alone needs **a second, independent signal** unless the production signal is overwhelming
-  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): we validate the live prompt, and only a *clearly* safe result — at least
-  the threshold plus one standard error — vetoes the incident; a result inside the threshold's noise band gives
-  the benefit of the doubt to safety. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
+  (≥ 2× baseline, z ≥ 5 on ≥ 400 calls): we validate the live prompt. For a prompt changed in the last 3 days the
+  validation vetoes only if it demonstrates safety (the same 95 % bound; one failure in 100 cannot show < 3 %, so a
+  small run no longer overrules hundreds of production calls — robustness r5: 51 h MTTR before). For the
+  long-standing reference prompt only a clearly safe result — threshold plus one standard error — vetoes, because a
+  spike on the prompt that defines the baseline is more often noise and "fixing" it costs engagement. Per-look false-alarm probability ≈ 2×10⁻⁴ (z 3.5) × P(production prompt fails
   validation) ≈ 10⁻³ *(derived from the binomial at n=300)*, so a false prompt change is ~10⁻⁶ per look.
 * **Choosing a fix (LLM proposes, never decides).** Candidates in order: (1) prompts with ≥ 1,000 connected
   calls in our own history and a normal flag rate, ordered by observed engagement (validation says nothing about
@@ -661,7 +668,11 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
   the new prompt not > 5 % below the pre-incident week (z < −2). A safe-but-disengaging fix (Kestrel memo:
   "nobody hallucinated, nobody stayed") is marked harmful and the next candidate is tried.
 * **Credits.** 40 % of the starting budget is reserved for incidents; routine work cannot spend it (routine
-  work currently spends nothing). Credits used: public_01 3, public_02 6 of 200.
+  work currently spends nothing). Credits used: public_01 0, public_02 6 of 200.
+  One pool serves every tenant (C15): a work-conserving fair share refuses a tenant (audited `hold`) only while
+  another tenant has an open incident and it has used more than its equal share of the starting budget; with no
+  contention it never blocks. `r7_credit_contention` (10 credits, two tenants ship an unsafe prompt the same morning):
+  both incidents fixed, 120 and 210 min, 4 credits used.
 
 ### Caller-ID incident (C5) — see §5. Detection uses a 6 h window so a flag is visible within ~2 h of dialling.
 
@@ -693,35 +704,38 @@ D3 18:00  ks_cancel    incident_verified        controller inc-ks_cancel-5025: a
 ## 8. Scale
 
 Measured on `public_03_load` (12 workflows, ~840k events/day) with `scripts/load_test.sh`; full report in
-`reports/public_03.md`. Windows-11-10.0.26300-SP0, 12 logical CPUs, Python 3.12.10. Measured on a 12-logical-CPU Windows 11 laptop; the simulator ran on the same machine; unrelated containers (Kafka, Postgres, Redis, MinIO, Jaeger) were running on the host. Code: commit 51965ce.
+`reports/public_03.md`. Windows-11-10.0.26300-SP0, 12 logical CPUs, Python 3.12.10. Final code. The host was about 2x slower during this run than during earlier load tests: the simulator's own advance time (not our code) was 39-47 s per simulated day here vs 16-26 s before, and controller time rose by about the same factor (controller/simulator ratio 1.7-2.8 here, 2.1-3.4 on 51965ce). Compare runs by that ratio, or use the container-capped curve in reports/scaling.md (48.6-49.1 s per simulated day at 1x on 4 vCPU).
 
 | measure | value |
 |---|---|
-| history backlog ingested before D0 | 5,537,379 in 127.1s → 43,550 events/s |
-| live ingest (D0–end) | 4,200,187 in 102.9s → 40,806 events/s |
-| controller time per simulated day (ingest + decide, 12 workflows) | 42–53 s (SRE target < 600 s) |
-| simulator time per simulated day (world generation, not ours) | 16–20 s |
-| wall clock per simulated day, both together | 64–70 s |
-| controller time per 15-min tick, p50 / p95 / max | 0.43s / 1.14s / 17.84s |
-| peak controller memory | 1046 MB |
+| history backlog ingested before D0 | 5,537,379 in 220.1s → 25,164 events/s |
+| live ingest (D0–end) | 4,200,178 in 194.4s → 21,609 events/s |
+| controller time per simulated day (ingest + decide, 12 workflows) | 73–108 s (SRE target < 600 s) |
+| simulator time per simulated day (world generation, not ours) | 39–47 s |
+| wall clock per simulated day, both together | 118–148 s |
+| controller time per 15-min tick, p50 / p95 / max | 0.84s / 1.74s / 40.55s |
+| peak controller memory | 360 MB |
 | SQLite at end (7 days history + 5 days, every call row kept) | 433 MB for 7,433,295 call rows |
 
 **Decision lag.** In simulated time a detector sees an event at most 15 min (one tick) after it happens and
 decides at most 60 min later (hourly cadence); a supervisor prompt edit triggers a decision on the next tick.
-In wall-clock time the controller's own work per 15-minute tick is 0.43s / 1.14s / 17.84s (ingest + all decisions for
+In wall-clock time the controller's own work per 15-minute tick is 0.84s / 1.74s / 40.55s (ingest + all decisions for
 12 workflows); against a real dialler that is the end-to-end lag added by us.
 
 **SRE's target** (one simulated day in < 10 wall-clock minutes on 4 vCPU / 8 GB): our share is
-42–53 s per simulated day on a laptop; the rest of the wall time is the simulator generating the
+73–108 s per simulated day on a laptop; the rest of the wall time is the simulator generating the
 world. Memory stays small because analysis is SQL over an on-disk table; only per-person feature arrays
-(1 int32 per person) live in RAM.
+(1 int32 per person) live in RAM, and chunks are streamed, never held whole. Peak memory on public_03 is
+**360 MB**: it had risen to 1,046 MB when the partial-response fix began parsing each 250k-event history chunk into a
+list (+487 MB, measured); chunks stream again and an incomplete read rolls the chunk's transaction back and is
+re-read whole (`reports/memory.md`).
 
 **What breaks first at 10× (≈ 8.5 M events/day, 120 workflows)** *(derived from the measurements above)*:
 1. **Per-tick decision queries — measured and fixed.** Profiling public_03 showed decisions re-aggregating raw call
    rows over sliding 6–72 h windows (caller-ID health 59 % of decide time, decay checks 20 %). Hourly rollups
    (`did_hour`, `arm_hour`) are now maintained inside each chunk's ingest transaction — recomputed per touched
    workflow-hour from the call rows, so they stay exactly-once under replay — and decisions read those instead:
-   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time in an isolated measurement (15–27 s decide in the final load run on a busier shared host, `reports/public_03.md`). Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`): controller time per simulated day ~47 s → ~126 s (2.7× for 3× the events and workflows), peak memory 898 → 1,036 MB, 0 decision errors — linear, with ≈ 420 s/day projected at 10× (under the 600 s target, little headroom).
+   decide time fell from ~52–67 s to ~8–14 s per simulated day for ~+15 % ingest time in an isolated measurement (15–27 s decide in the final load run on a busier shared host, `reports/public_03.md`). Measured scaling: 1× vs 3× public_03 in a 4 vCPU / 8 GB Linux container (`reports/scaling.md`, `scripts/scaling.sh`): controller time per simulated day ~49 s → ~139 s (2.8× for 3× the events and workflows), peak memory 272 → 345 MB, 0 decision errors — linear; ≈ 460 s/day *projected* at 10× (under the 600 s target, modest headroom). The first limit is ingest CPU on one core (70 % of ingest time is reading, parsing and the per-event transform; SQLite under a third — `scripts/bench_ingest.py --phases`), so the 10× answer is sharding workflows across processes.
 2. **One SQLite writer.** Ingest at ~50k events/s is ~3 min/day at 10× — fine — but one process serialises
    ingest and decisions. Fix: partition workflows into shards (hash of `workflow_id`), one loop + checkpoint per
    shard, on the platform's Postgres with `calls` partitioned by day.
@@ -740,7 +754,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
   once (event counts equal to the simulator's), calls table equal to the simulator's call events, no proposal or
   approval applied twice, every simulator approval known to our store, nothing left in an uncertain state,
   experiments and incidents not duplicated and continuing under the same ids, credits accounted for, run finished.
-  Outcomes under kills: conclusion rate +26.5% vs baseline with 9 kills vs +24.6% uninterrupted, both on the final decision logic (commit `51965ce`).
+  Outcomes under kills: conclusion rate +25.1% vs baseline with 9 kills vs +26.4% uninterrupted, both on the final decision logic (commit `9c023e9`).
 * **The test found three real defects**, all fixed: a paid validation result could be lost between the ledger
   and the incident (now one transaction); a supervisor-prompt probe was cleared before the validation call, so a
   crash forgot a pending safety check (now cleared in the same transaction as the result); and a caller-ID
@@ -756,7 +770,10 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
 * **One controller per state file.** An exclusive OS lock on `<db>.lock` is taken before the store is opened; a
   second controller on the same state is refused (two would duplicate submissions). Released by the OS on SIGKILL.
 * **Corrupted state.** `PRAGMA quick_check` at start-up; a damaged store is archived and rebuilt from the simulator
-  (an approval we can no longer explain is adopted as `WITHDRAWN`, never applied).
+  Approvals with no local row are adopted from the simulator: open ones (pending/approved) as `WITHDRAWN`, never
+  applied, because the context that justified them is gone; terminal ones as reported — `APPLIED` with the version
+  the config history attributes to that approval, `REJECTED`, `EXPIRED`, `LAPSED` — each with an audited
+  `recovery_reconcile` decision, all counted toward the approver's budget.
 * **Every applied change is verified 24 h later** (`post_apply_verification`: pickup and engagement before/after,
   guardrail KPI against the policy margin, alert on breach) — the audit trail always has a "what happened next".
 * **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 32 attacks — an apply-boundary crash matrix, HTTP
@@ -869,23 +886,23 @@ listed in §14.
 
 | workflow | conclusion rate | Δ | pickup | Δ | engagement | Δ | engagement gap captured | hallucinated calls (base) |
 |---|---|---|---|---|---|---|---|---|
-| ks_cancel | 0.383 | +15.0% | 0.263 | +10.3% | 0.505 | +2.8% | 4% | 61 (47) |
-| nw_kyc | 0.425 | +16.8% | 0.260 | +7.5% | 0.632 | +7.0% | 28% | 17 (21) |
-| nw_renewal | 0.451 | +7.4% | 0.283 | +7.5% | 0.545 | -0.1% | -1% | 50 (42) |
-| ALL | 0.414 | +12.5% | 0.269 | +8.7% | 0.543 | +2.5% | 8% | 128 (110) |
+| ks_cancel | 0.385 | +15.6% | 0.265 | +11.4% | 0.502 | +2.3% | 4% | 65 (47) |
+| nw_kyc | 0.442 | +21.7% | 0.274 | +13.0% | 0.624 | +5.6% | 28% | 24 (21) |
+| nw_renewal | 0.468 | +11.5% | 0.285 | +8.0% | 0.561 | +2.8% | 1% | 48 (42) |
+| ALL | 0.425 | +15.3% | 0.274 | +10.5% | 0.547 | +3.2% | 9% | 137 (110) |
 
-25 changes applied (beneficial: 7, neutral: 18); 7 approval requests ({"approved": 7, "expired": 0}), 18 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 1, "ks_cancel": 1}; credits used 3 (1 validation runs, 0 LLM calls).
+26 changes applied (beneficial: 9, neutral: 17); 8 approval requests ({"approved": 8, "expired": 0}), 18 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 1, "ks_cancel": 1}; credits used 0 (0 validation runs, 0 LLM calls).
 
 ### public_02_incidents (`reports/public_02_incidents.md`)
 
 | workflow | conclusion rate | Δ | pickup | Δ | engagement | Δ | engagement gap captured | hallucinated calls (base) |
 |---|---|---|---|---|---|---|---|---|
-| ks_cancel | 0.370 | +49.6% | 0.256 | +39.2% | 0.496 | +4.1% | 37% | 87 (330) |
-| nw_kyc | 0.401 | +7.0% | 0.261 | +7.7% | 0.587 | -0.9% | -7% | 30 (31) |
-| nw_renewal | 0.490 | +14.8% | 0.295 | +12.6% | 0.554 | +1.1% | 14% | 54 (55) |
-| ALL | 0.417 | +24.6% | 0.270 | +21.7% | 0.535 | +0.9% | 25% | 171 (416) |
+| ks_cancel | 0.376 | +51.8% | 0.253 | +37.5% | 0.508 | +6.7% | 42% | 84 (330) |
+| nw_kyc | 0.422 | +12.5% | 0.269 | +11.1% | 0.594 | +0.3% | -2% | 42 (31) |
+| nw_renewal | 0.487 | +14.1% | 0.289 | +10.4% | 0.559 | +2.0% | 23% | 70 (55) |
+| ALL | 0.422 | +26.4% | 0.268 | +20.9% | 0.544 | +2.6% | 31% | 196 (416) |
 
-28 changes applied (beneficial: 10, harmful: 3, neutral: 15); 15 approval requests ({"approved": 12, "rejected": 3, "expired": 0}), 17 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 2, "nw_kyc": 1, "ks_cancel": 1}; credits used 6 (2 validation runs, 0 LLM calls).
+31 changes applied (beneficial: 12, harmful: 2, neutral: 17); 17 approval requests ({"approved": 16, "rejected": 1, "expired": 0}), 17 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 2, "nw_kyc": 1, "ks_cancel": 2}; credits used 6 (2 validation runs, 0 LLM calls).
 
 ### Out of sample: the robustness suite (`reports/robustness.md`)
 
@@ -896,29 +913,29 @@ at two random seeds. The table is the simulator grader's output:
 
 | scenario | run.sh exit | conclusion Δ (per workflow) | pickup Δ | engagement Δ | changes (+/=/-) | governance | credits | winners / experiments | decision errors |
 |---|---|---|---|---|---|---|---|---|---|
-| public_01_dev | 0 | +12.5% (ks_cancel +15.0%, nw_kyc +16.8%, nw_renewal +7.4%) | +8.7% | +2.5% | 25 (7+/18=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 3 | 2/6 | 0 |
-| public_01_dev_s2 | 0 | +11.9% (ks_cancel +13.0%, nw_kyc +15.1%, nw_renewal +8.9%) | +8.7% | +2.2% | 23 (6+/17=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 1/6 | 0 |
-| public_02_incidents | 0 | +21.2% (ks_cancel +47.2%, nw_kyc +7.4%, nw_renewal +8.4%) | +20.0% | -0.4% | 31 (12+/17=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 6 | 2/8 | 0 |
-| public_02_incidents_s2 | 0 | +25.7% (ks_cancel +56.2%, nw_kyc +16.7%, nw_renewal +8.2%) | +23.5% | +0.1% | 31 (13+/16=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 12 | 1/9 | 0 |
-| r1_shuffled_truth | 0 | +21.0% (ks_cancel +16.3%, nw_kyc +5.2%, nw_renewal +39.2%) | +15.8% | +3.5% | 29 (10+/17=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 4/6 | 0 |
-| r1_shuffled_truth_s2 | 0 | +23.6% (ks_cancel +21.2%, nw_kyc +7.1%, nw_renewal +38.1%) | +16.5% | +4.7% | 27 (7+/16=/4-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 1/7 | 0 |
-| r2_strict_policy | 0 | +23.5% (ks_cancel +8.4%, nw_kyc +169.7%, nw_renewal +7.3%) | +20.5% | +0.7% | 17 (9+/4=/4-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 18 | 1/8 | 0 |
-| r2_strict_policy_s2 | 0 | +23.0% (ks_cancel +7.1%, nw_kyc +162.4%, nw_renewal +9.7%) | +18.7% | +1.6% | 11 (8+/1=/2-) | exp 1, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 15 | 2/6 | 0 |
+| public_01_dev_s2 | 0 | +13.3% (ks_cancel +14.2%, nw_kyc +16.6%, nw_renewal +10.4%) | +9.3% | +2.9% | 25 (8+/17=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 2/7 | 0 |
+| public_02_incidents_s2 | 0 | +23.6% (ks_cancel +55.1%, nw_kyc +6.2%, nw_renewal +10.0%) | +21.2% | +0.5% | 31 (12+/17=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 6 | 1/9 | 0 |
+| r1_shuffled_truth | 0 | +21.6% (ks_cancel +14.6%, nw_kyc +4.0%, nw_renewal +44.2%) | +16.1% | +3.6% | 28 (10+/15=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 3/7 | 0 |
+| r1_shuffled_truth_s2 | 0 | +23.6% (ks_cancel +18.3%, nw_kyc +12.2%, nw_renewal +38.7%) | +17.4% | +4.0% | 27 (8+/16=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 1/7 | 0 |
+| r2_strict_policy | 0 | +22.7% (ks_cancel +7.1%, nw_kyc +178.4%, nw_renewal +5.0%) | +19.6% | +0.8% | 12 (9+/1=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 18 | 1/7 | 0 |
+| r2_strict_policy_s2 | 0 | +21.6% (ks_cancel +6.0%, nw_kyc +159.3%, nw_renewal +8.5%) | +18.3% | +1.0% | 11 (7+/2=/2-) | exp 1, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 9 | 1/7 | 0 |
 | r3_null_effects | 0 | +9.7% (ks_cancel +10.2%, nw_kyc +9.4%, nw_renewal +9.3%) | +9.1% | +0.0% | 28 (3+/25=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/8 | 0 |
-| r3_null_effects_s2 | 0 | +11.2% (ks_cancel +9.9%, nw_kyc +10.2%, nw_renewal +13.2%) | +9.6% | +0.6% | 26 (4+/22=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/8 | 0 |
-| r4_decay_heavy | 0 | +10.4% (ks_cancel +12.3%, nw_kyc +3.6%, nw_renewal +12.1%) | +10.1% | -0.3% | 30 (11+/18=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 4/10 | 0 |
-| r4_decay_heavy_s2 | 0 | +9.0% (ks_cancel +10.9%, nw_kyc +6.2%, nw_renewal +8.5%) | +9.6% | -0.9% | 33 (10+/21=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 3/7 | 0 |
-| r5_low_credits | 0 | +12.9% (ks_cancel +15.0%, nw_kyc +6.8%, nw_renewal +14.0%) | +9.9% | +2.2% | 31 (10+/18=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 6 | 1/8 | 0 |
-| r5_low_credits_s2 | 0 | +12.9% (ks_cancel +18.2%, nw_kyc +9.5%, nw_renewal +9.1%) | +10.3% | +1.7% | 30 (10+/18=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 5 | 1/7 | 0 |
+| r3_null_effects_s2 | 0 | +11.1% (ks_cancel +11.4%, nw_kyc +10.3%, nw_renewal +11.2%) | +10.1% | -0.0% | 24 (4+/20=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/7 | 0 |
+| r4_decay_heavy | 0 | +10.3% (ks_cancel +11.7%, nw_kyc +5.3%, nw_renewal +11.6%) | +10.1% | -0.4% | 33 (11+/21=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 2/8 | 0 |
+| r4_decay_heavy_s2 | 0 | +11.0% (ks_cancel +13.4%, nw_kyc +8.0%, nw_renewal +10.1%) | +10.1% | +0.4% | 33 (10+/21=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 3/7 | 0 |
+| r5_low_credits | 0 | +14.1% (ks_cancel +19.5%, nw_kyc +7.5%, nw_renewal +12.2%) | +10.8% | +2.4% | 29 (10+/17=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 3 | 6 | 1/8 | 0 |
+| r5_low_credits_s2 | 0 | +14.4% (ks_cancel +18.4%, nw_kyc +9.5%, nw_renewal +12.9%) | +10.0% | +3.1% | 31 (11+/18=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 3 | 11 | 1/7 | 0 |
 | r6_odd_shapes | 0 | +20.2% (ks_cancel +25.8%, nw_kyc +30.7%, nw_renewal +10.7%) | +16.3% | +1.2% | 24 (8+/15=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 1/4 | 0 |
-| r6_odd_shapes_s2 | 0 | +15.8% (ks_cancel +29.6%, nw_kyc +13.2%, nw_renewal +8.8%) | +13.7% | +0.4% | 25 (6+/19=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 1/5 | 0 |
+| r6_odd_shapes_s2 | 0 | +16.9% (ks_cancel +32.5%, nw_kyc +14.0%, nw_renewal +9.0%) | +13.7% | +1.3% | 26 (7+/19=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 3 | 2/5 | 0 |
+| r7_credit_contention | 0 | +17.5% (ks_cancel +17.8%, nw_kyc +9.8%, nw_renewal +21.7%) | +9.1% | +6.3% | 29 (9+/18=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 4 | 2/9 | 0 |
+| r7_credit_contention_s2 | 0 | +18.0% (ks_cancel +22.9%, nw_kyc +5.5%, nw_renewal +20.1%) | +10.6% | +5.5% | 32 (9+/19=/4-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 4 | 2/7 | 0 |
 
 How to read it, and what it taught us:
 
 * **False winners — measured, not inferred.** `r3_null_effects` has no true welcome/voice effects, so every
   experiment winner there is a false winner. The grader's "0 harmful" on it is weak evidence (a null variant change
   is neutral by construction), so the table counts winners from our own audit store. **Final code: 0 winners in
-  16 null experiments** across the two seeds. On the code before the adversarial audit it was 2 in 16 (still
+  15 null experiments** across the two seeds (0 in 16 on the previous evidence run). On the code before the adversarial audit it was 2 in 16 (still
   consistent with the ≤ 5 % bound: P ≈ 0.19 of ≥ 2) — one of them came through the cohort-level family, which was
   re-spending the look's α (fixed: 80/20 split), and the pooled one was later rolled back by the holdout decay
   test. 0/16 is consistent with the bound, not proof of a lower rate.
@@ -936,6 +953,16 @@ How to read it, and what it taught us:
   - 20 h MTTR on a borderline-unsafe prompt (validation exactly at the threshold) → pooled second run, and the
     benefit of the doubt goes to safety once production flags have fired;
   - a promotion applied 30 h after it was decided, after the effect had faded → re-checked while pending.
+  - a borderline-unsafe prompt (2.5 % hallucination) with 12 credits took 51 h to fix: a 100-call validation with one
+    failure vetoed hundreds of production calls, and the supervisor-prompt probe was skipped below 10 credits → a
+    validation must *demonstrate* the prompt clears the approver's gate (exact 95 % bound) before it overrules a
+    production alarm on a fresh prompt or lets a probe pass; probe from 4 credits, pooled second run;
+  - a dropped (significantly worse) challenger's traffic was spread over the other unproven challengers → it goes
+    back to the incumbent;
+  - the first incident × variant analysis reported two interactions the truth does not contain → comparison group
+    limited to options present in both windows, only the QA flag rate can raise one.
+  Paired A/B of the last three against the previous evidence code over the same 14 runs: harmful changes −8,
+  incident MTTR −24 % (7,920 → 6,030 min summed), conclusion-rate lift unchanged (−0.06 pp, SE 0.43), 0 errors.
 * **What remains, honestly.** Two recurring "harmful" verdicts: (a) the first exploration launch on workflows
   whose challengers are worse in truth (the price of a 40 % exploration share; 1–2 % expected engagement), and
   (b) reverting the "persuasive" prompt, which the grader counts both as an incident fix and an engagement loss —
@@ -951,18 +978,21 @@ How to read it, and what it taught us:
   the audit trail: caller-ID load spreading and moving off flagged numbers (pickup +10–40 %; on
   public_02 `ks_cancel` the flagged number's share went from 50 % to 10 % on the day of the flag and 0 % after),
   cohort call-hour weights from history, and welcome/voice winners promoted with a holdout. On `pickup_rate`-primary
-  `nw_kyc` the primary KPI moved most (pickup +7.5% on public_01, +7.7% on public_02) with engagement inside its guardrail.
+  `nw_kyc` the primary KPI moved most (pickup +13.0% on public_01, +11.1% on public_02) with engagement inside its guardrail.
 * **Incidents.** public_02's unsafe supervisor prompt on `ks_cancel` was detected by a validation probe 15 minutes
-  after the edit, reverted through an approval that said so, and verified; MTTR 105 min; hallucinated
-  calls 87 on ks_cancel vs 330 vs the baseline. The supervisor's mid-experiment voice edit on `nw_renewal` was respected
+  after the edit, reverted through an approval that said so, and verified; MTTR 135 min; hallucinated
+  calls 84 on ks_cancel vs 330 vs the baseline. The supervisor's mid-experiment voice edit on `nw_renewal` was respected
   (dimension locked 48 h, experiment aborted, never overwritten).
-* **Where we were harmful, and why.** public_01: 0 of 25 — none. public_02: 3 of 28 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.016, caller-ID health +0.039); nw_renewal v14 ['voice'] (engagement -0.010, caller-ID health +0.000); ks_cancel v16 ['welcome_message', 'voice'] (engagement -0.013, caller-ID health +0.000). These are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
+* **Where we were harmful, and why.** public_01: 0 of 26 — none. public_02: 2 of 31 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.015, caller-ID health +0.039); nw_renewal v14 ['voice'] (engagement -0.011, caller-ID health +0.000). These are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
 * **Decay.** The decaying welcome message (`W3`) was promoted on its early lift, then rolled back: its share fell
   to 0 within 3 days of the decay onset. That is slower than we'd like: with a 15 % holdout the
-  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. In the final
-  public_01 run W3 only won late (D4), and the decay test had not fired by the end: its share was still 0.85 on
-  days 5–7 (`reports/public_01_dev.md`). Late winners leave too little post-decay data before the run ends.
-* **Governance hygiene.** Across both runs: 22 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 2 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (3 on public_02), re-planned from fresh data.
+  test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. A winner
+  that wins late can run out of time: in an earlier public_01 run W3 won on D4 (after its decay began) and was not
+  rolled back by the end — the holdout showed −1.3 points over D5–7 (z −0.53), no evidence either way. We did not
+  lower the 1 % threshold (that brought back false rollbacks); instead every passing check is audited daily
+  (`decay_check`) with the smallest drop it could have detected, so a miss is explainable from the store. In the
+  final public_01 run W3 won on D2 and was rolled back at D6 18:00.
+* **Governance hygiene.** Across both runs: 25 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 2 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (1 on public_02), re-planned from fresh data.
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
   promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost.
 
@@ -992,7 +1022,7 @@ How to read it, and what it taught us:
 3. **Power is the binding constraint**, not code: on ~600–1,000 connected calls/day a 10 % MDE takes days, and
    decay detection with a 15 % holdout takes 1–2 days after a decay completes.
 4. **Exploration has a cost.** Starting a test exposes 40 % of traffic to unproven options; the grader marks
-   some launches "harmful" by hidden truth (0 on public_01, 3 on public_02). Harm stopping limits it; it can't remove it.
+   some launches "harmful" by hidden truth (0 on public_01, 2 on public_02). Harm stopping limits it; it can't remove it.
 5. **Caller-ID fatigue is handled reactively** (relative pickup), not with a load model. A model of
    pickup vs per-number volume would allow planned rotation.
 6. **Dry runs ignore lead-pool depletion** for schedule changes (stated as an upper bound).
