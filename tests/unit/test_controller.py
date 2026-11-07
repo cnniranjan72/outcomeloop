@@ -323,3 +323,23 @@ def test_fair_share_is_work_conserving_and_binds_only_under_contention():
     assert not fair_share_ok(spent, "t1", 1, 12, 3, contenders={"t1", "t2"})
     assert fair_share_ok(spent, "t2", 3, 12, 3, contenders={"t1", "t2"})
     assert fair_share_ok({"t1": 50.0}, "t1", 3, 12, 1, contenders={"t1", "t2"})   # single tenant: never binds
+
+
+def test_pickup_drop_after_a_voice_change_is_recorded_but_not_paged(ctl, db):
+    # voice is heard only after the call connects: a pickup drop in the 24 h after a voice change is time-confounded
+    from helpers import add_calls
+    from outcomeloop.db import dumps as _d
+    t = 2 * 1440
+    with db.tx():
+        db.x("INSERT INTO config_versions (wf, version, actor, minute, changed_dims) VALUES (?,?,?,?,?)",
+             (ctl.wf, 5, "controller_approved", t, _d(["voice"])))
+        db.x("INSERT INTO proposals (proposal_id, wf, route, state, kind, base_version, body, applied_version,"
+             " created_minute, updated_minute) VALUES ('ol-v', ?, 'approval', 'APPLIED', 'routine', 4, '{}', 5, ?, ?)",
+             (ctl.wf, t, t))
+    add_calls(db, ctl.wf, 4000, 1200, 600, minute=t - 1440, spread=1440)     # before: pickup 0.30
+    add_calls(db, ctl.wf, 4000, 800, 400, minute=t, spread=1440)             # after:  pickup 0.20
+    spec = dict(ctl.specs[ctl.wf], objective={"primary": "engagement_rate", "guardrail": {"pickup_rate_max_drop": 0.02}})
+    ctl.verify_applied(ctl.wf, spec, t + 1440)
+    v = db.q1("SELECT summary, evidence FROM decisions WHERE kind='post_apply_verification'")
+    assert "not attributable" in v[0] and "pickup_drop_not_attributable" in v[1]
+    assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='alert'")[0] == 0

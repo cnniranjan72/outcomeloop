@@ -31,6 +31,10 @@ from .timeutil import minute_to_label
 
 
 
+# levers a person only experiences after picking up: they can change engagement, never pickup
+POST_CONNECT_DIMS = {"welcome_message", "voice", "prompt_version"}
+
+
 def fair_share_ok(spent: dict, tenant, cost: float, budget0: float, n_tenants: int, contenders: set) -> bool:
     """Work-conserving fair share of one credit pool: a tenant may always spend while no *other* tenant has an open
     incident; under contention it may spend only up to its equal share of the starting budget."""
@@ -526,6 +530,15 @@ class Controller:
                 gc = pk if gkpi == "pickup_rate" else en
                 breach = -gc.diff > margin and gc.z < -2.33
                 out["guardrail_breach"] = breach
+                if breach and gkpi == "pickup_rate" and set(out["changed_dims"]) <= POST_CONNECT_DIMS:
+                    # welcome message, voice and prompt are heard only after the call connects: they cannot move
+                    # pickup. A pickup drop after such a change is the time confound (campaign mix, hour, number
+                    # health), so it is recorded, not paged — and a real pickup problem is caught by its own
+                    # detectors (caller-ID health, KPI drift) with the right cause attached.
+                    breach = False
+                    out["guardrail_breach"] = False
+                    out["pickup_drop_not_attributable"] = ("changed dims act after the call connects; the before/after"
+                                                           " pickup drop is time-confounded")
             else:
                 breach = False
                 out["note"] = "not enough calls on one side of the change"
@@ -533,14 +546,19 @@ class Controller:
                 db.decide(now, wf, "post_apply_verification", f"{pid} (v{ver}): "
                           + (f"pickup {out['pickup']['before']:.3f}→{out['pickup']['after']:.3f}, engagement "
                              f"{out['engagement']['before']:.3f}→{out['engagement']['after']:.3f}"
-                             + (f"; GUARDRAIL BREACH on {gkpi}" if breach else "; guardrail ok")
+                             + (f"; GUARDRAIL BREACH on {gkpi}" if breach else
+                                "; pickup fell but the change acts after connect (not attributable)"
+                                if out.get("pickup_drop_not_attributable") else "; guardrail ok")
                              if "pickup" in out else out["note"]),
                           evidence=out, proposal_id=pid, config_version=ver,
                           reasoning="before/after on the whole workflow (24 h each side); confounded by time, so a"
                                     " check rather than an effect estimate")
                 if breach:
                     db.decide(now, wf, "alert", f"guardrail {gkpi} fell beyond the policy margin after {pid}",
-                              evidence=out, proposal_id=pid)
+                              evidence=out, proposal_id=pid,
+                              reasoning="post-apply check: the guardrail KPI fell by more than the policy margin and"
+                                        " significantly (z < -2.33) in the 24 h after the change; before/after is"
+                                        " time-confounded, so a human looks before anything is reverted")
 
     # ---- per-person call time (C4), as a randomised experiment
     def step_persontime(self, wf, spec, now, ctx):
