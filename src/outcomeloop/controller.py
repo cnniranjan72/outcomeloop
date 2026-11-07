@@ -1,8 +1,8 @@
-"""The control loop: ingest â†’ handle events â†’ governance â†’ decide â†’ advance.
+"""The control loop: ingest → handle events → governance → decide → advance.
 
 Planning model: every decision tick we compute the *desired* config for a workflow from our own state
 (cohort set, schedule, caller-ID health, experiment plans, incident fixes) layered on top of the *current live*
-config. The proposal is simply current â†’ desired. Re-basing after a supervisor edit or a stale/expired
+config. The proposal is simply current → desired. Re-basing after a supervisor edit or a stale/expired
 proposal is therefore automatic: the next plan starts from the new live config, and dimensions a supervisor
 touched recently are locked so we never overwrite them silently.
 """
@@ -44,7 +44,7 @@ def _norm(d: dict) -> dict:
 
 
 def changed_dims(old: dict, new: dict) -> list[str]:
-    """Same semantics as the governance boundary uses (docs/SIMULATOR.md Â§4.2)."""
+    """Same semantics as the governance boundary uses (docs/SIMULATOR.md §4.2)."""
     ch = set()
     if old.get("cohorts", []) != new.get("cohorts", []):
         ch.add("cohorts")
@@ -150,7 +150,7 @@ class Controller:
                 return self.sim.state()
             except Exception:
                 if i % 10 == 0:
-                    log.info("waiting for simulator at %s â€¦", self.s.sim_url)
+                    log.info("waiting for simulator at %s …", self.s.sim_url)
                 time.sleep(1)
         raise SystemExit(f"simulator at {self.s.sim_url} not reachable")
 
@@ -287,7 +287,7 @@ class Controller:
                 locks[d] = minute + int(self.s.supervisor_lock_hours * 60)
             self.db.kv_set(f"locks:{wf}", locks)
             self.db.decide(minute, wf, "supervisor_edit", f"supervisor changed {dims}; locked for "
-                           f"{self.s.supervisor_lock_hours:.0f}h â€” we will not propose changes to these dims",
+                           f"{self.s.supervisor_lock_hours:.0f}h — we will not propose changes to these dims",
                            reasoning="supervisor edits are authoritative and bypass governance; we never overwrite"
                                      " them silently. Pending proposals on an older base will be re-planned.",
                            config_version=ver, actor="controller")
@@ -320,7 +320,7 @@ class Controller:
 
     def _on_gov(self, kind: str, wf: int, pid: str, info: dict):
         msg = {"approved": "approved by client approver", "rejected": "rejected", "expired": "expired unanswered",
-               "lapsed": "approval lapsed before apply", "stale": "base version changed â€” will re-plan on new base",
+               "lapsed": "approval lapsed before apply", "stale": "base version changed — will re-plan on new base",
                "applied": "applied"}.get(kind, kind)
         self.db.decide(self.now, wf, f"proposal_{kind}", f"{pid}: {msg}", evidence=info, proposal_id=pid,
                        approval_id=info.get("approval_id"), config_version=info.get("version"),
@@ -384,7 +384,7 @@ class Controller:
                       f" cohorts by {ev.get('chosen')} {[c.cohort_id for c in cohorts]}, schedule dry-run pickup lift"
                       f" {dry.get('rel_lift', 0):+.1%}, QA flag reference rate {ref:.4f}",
                       reasoning="cohort feature = the one whose values have the most different hour-of-day pickup"
-                                " profiles (likelihood-ratio test p<0.001, largest GÂ²/df); groups below 10% of dials are"
+                                " profiles (likelihood-ratio test p<0.001, largest G²/df); groups below 10% of dials are"
                                 " merged so no cohort is too small to measure",
                       evidence={"cohorts": ev, "schedule_dry_run": dry, "halluc_baseline": base})
 
@@ -542,7 +542,7 @@ class Controller:
             if st and st[0] in ("REJECTED", "EXPIRED", "LAPSED", "STALE", "SUBMIT_FAILED"):
                 with db.tx():
                     db.x("UPDATE incidents SET state='fix_ready' WHERE incident_id=?", (iid,))
-                    db.decide(now, wf, "incident_repropose", f"{iid}: fix proposal {pid} {st[0]} â€” re-proposing",
+                    db.decide(now, wf, "incident_repropose", f"{iid}: fix proposal {pid} {st[0]} — re-proposing",
                               incident_id=iid, proposal_id=pid)
 
     def _engagement_check(self, wf, d, prompt, now) -> dict:
@@ -580,7 +580,9 @@ class Controller:
         floor = 0 if incident else budget0 * self.s.credit_incident_reserve
         return st["credits_remaining"] - cost >= floor
 
-    def _validate(self, wf, spec, prompt, purpose) -> dict | None:
+    def _validate(self, wf, spec, prompt, purpose, persist=None) -> dict | None:
+        """persist(run), if given, runs inside the transaction that records the paid result, so a crash can never
+        leave a paid-for validation committed in the ledger but unknown to the state that uses it."""
         n = self.s.validation_n
         cost = math.ceil(n / 100)
         if not self._credits_ok(cost, incident=True):
@@ -599,7 +601,9 @@ class Controller:
         with self.db.tx():
             self.db.x("UPDATE credits_ledger SET state='done', response=? WHERE id=?", (dumps(run), lid))
             self.db.decide(self.now, wf, "validation_run", f"validated {prompt}: pass_rate {run['pass_rate']:.3f}"
-                           f" (n={n}, {cost} credits) â€” {purpose}", evidence=run)
+                           f" (n={n}, {cost} credits) — {purpose}", evidence=run)
+            if persist is not None:
+                persist(run)
         return run
 
     def _find_fix(self, wf, spec, iid, d, bad_prompt, now):
@@ -625,33 +629,42 @@ class Controller:
                                    " (?,?,?,?,?,?)", (now, wf, "llm", f"suggest fixes for {iid}", "sent", cost)).lastrowid
                     r = self.sim.suggest_fixes(spec["workflow_id"],
                                                f"hallucination flag rate spike on prompt {bad_prompt}")
-                    with db.tx():
+                    with db.tx():   # paid suggestions are persisted with the ledger row (crash-safe, no re-buy)
                         db.x("UPDATE credits_ledger SET state='done', response=? WHERE id=?", (dumps(r), lid))
-                    d["llm_called"] = True
-                    d["llm_suggestions"] = r["suggestions"]
+                        d["llm_called"] = True
+                        d["llm_suggestions"] = r["suggestions"]
+                        db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
                     cands = [(x["prompt_version"], "llm") for x in r["suggestions"] if x["prompt_version"] not in tried]
                 except (ApiError, Uncertain) as e:
                     log.error("llm call failed: %s", e)
         best = None
+
+        def keep(run, p, src):
+            # runs inside _validate's ledger transaction: the paid result, the incident's `tried` list and (if it
+            # passes) the fix selection commit together, so a restart never pays to validate the same prompt again
+            tried[p] = {"source": src, "validation": run}
+            if run["pass_rate"] < thr:
+                db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
+                return
+            d.update({"fix_prompt": p, "fix_source": src, "validation_run_id": run["validation_run_id"],
+                      "validation": run})
+            db.x("UPDATE incidents SET state='fix_ready', data=? WHERE incident_id=?", (dumps(d), iid))
+            db.decide(now, wf, "incident_fix_selected", f"{iid}: fix = prompt {p} ({src}),"
+                      f" validation pass {run['pass_rate']:.3f} >= {thr}", evidence=d, incident_id=iid,
+                      reasoning="deterministic rule: candidates with observed history first (ordered by observed"
+                                " engagement, because validation measures safety only), then LLM suggestions;"
+                                " first candidate passing the policy validation threshold wins")
+
         for p, src in cands[:3]:
-            run = self._validate(wf, spec, p, purpose=f"candidate fix for {iid} ({src})")
+            run = self._validate(wf, spec, p, purpose=f"candidate fix for {iid} ({src})",
+                                 persist=lambda r, p=p, src=src: keep(r, p, src))
             if not run:
                 break
-            tried[p] = {"source": src, "validation": run}
             if run["pass_rate"] >= thr:
                 best = (p, src, run)
                 break   # known-good list is already ordered by observed engagement: first passing wins
         with db.tx():
-            if best:
-                d.update({"fix_prompt": best[0], "fix_source": best[1], "validation_run_id": best[2]["validation_run_id"],
-                          "validation": best[2]})
-                db.x("UPDATE incidents SET state='fix_ready', data=? WHERE incident_id=?", (dumps(d), iid))
-                db.decide(now, wf, "incident_fix_selected", f"{iid}: fix = prompt {best[0]} ({best[1]}),"
-                          f" validation pass {best[2]['pass_rate']:.3f} >= {thr}", evidence=d, incident_id=iid,
-                          reasoning="deterministic rule: candidates with observed history first (ordered by observed"
-                                    " engagement, because validation measures safety only), then LLM suggestions;"
-                                    " first candidate passing the policy validation threshold wins")
-            else:
+            if not best:
                 db.x("UPDATE incidents SET data=? WHERE incident_id=?", (dumps(d), iid))
                 db.decide(now, wf, "incident_no_fix", f"{iid}: no candidate passed validation yet", evidence=d,
                           incident_id=iid)
@@ -699,8 +712,8 @@ class Controller:
                                   experiment_id=e.experiment_id)
                 continue
             if e.status == "running":
-                due_look = (now % 1440) // 60 == look_hour and now - (e.start_minute or now) >= 20 * 60
-                final = now - (e.start_minute or now) >= e.horizon_days * 1440
+                due_look = (now % 1440) // 60 == look_hour and now - (e.start_minute if e.start_minute is not None else now) >= 20 * 60
+                final = now - (e.start_minute if e.start_minute is not None else now) >= e.horizon_days * 1440
                 if due_look or final:
                     res = self.exp.look(e, now, cohorts, {"margin": margin}, final)
                     e.looks.append({k: v for k, v in res.items() if k != "cohort_check"} | {"cohort_check": res.get("cohort_check")})
@@ -730,7 +743,7 @@ class Controller:
                         bl = self.exp.plan_rollback(e, dc["decayed"], now)
                         self._blacklist(wf, bl)
                         e.save(db, now)
-                        db.decide(now, wf, "decay_detected", f"{dim}: winner stopped winning in {dc['decayed']} â€”"
+                        db.decide(now, wf, "decay_detected", f"{dim}: winner stopped winning in {dc['decayed']} —"
                                   f" rolling back to incumbent", evidence=dc, experiment_id=e.experiment_id,
                                   reasoning="recent winner-vs-holdout lift is significantly below the lift measured at"
                                             " promotion (z<-2.33) or significantly negative")
@@ -762,7 +775,7 @@ class Controller:
                                      " confidence bound chosen")
         elif a == "no_winner":
             self.exp.plan_no_winner(e)
-            self.db.decide(now, wf, "experiment_no_winner", f"{e.dim}: no significant winner at horizon â€” keep"
+            self.db.decide(now, wf, "experiment_no_winner", f"{e.dim}: no significant winner at horizon — keep"
                            f" incumbent {e.incumbent}", evidence=res, experiment_id=e.experiment_id,
                            reasoning="insufficient evidence keeps the incumbent")
         elif a == "drop":
@@ -771,7 +784,7 @@ class Controller:
             self.db.decide(now, wf, "experiment_drop_arm", f"{e.dim}: dropping {res['drop']}", evidence=res,
                            experiment_id=e.experiment_id)
         else:
-            self.db.decide(now, wf, "experiment_look", f"{e.dim}: look t={res.get('t')} â€” continue", evidence=res,
+            self.db.decide(now, wf, "experiment_look", f"{e.dim}: look t={res.get('t')} — continue", evidence=res,
                            experiment_id=e.experiment_id)
 
     # ---- desired config
@@ -1030,9 +1043,9 @@ class Controller:
                                         f" statistical rule (see evidence).",
                             "promoting": f"{d}: promote the statistically significant winner, keeping a holdout on the"
                                          f" previous option to detect if the effect fades.",
-                            "concluding": f"{d}: the test found no significant winner â€” return all traffic to the"
+                            "concluding": f"{d}: the test found no significant winner — return all traffic to the"
                                           f" current option.",
-                            "rolling_back": f"{d}: the promoted option stopped beating the holdout â€” roll back.",
+                            "rolling_back": f"{d}: the promoted option stopped beating the holdout — roll back.",
                             "running": f"{d}: drop an alternative that is significantly worse."}.get(st, d))
         if "caller_id" in dims:
             out.append(self._did_text(wf))

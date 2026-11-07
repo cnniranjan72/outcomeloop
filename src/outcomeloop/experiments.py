@@ -95,7 +95,7 @@ class ExperimentEngine:
         vs = e.versions or [-1]
         sql = (f"SELECT {case} AS c, {col}, COUNT(*), SUM(conn), SUM(eng) FROM calls WHERE wf=? AND minute>=?"
                f" AND minute<? AND cfg_ver IN ({','.join('?' * len(vs))}) GROUP BY 1, 2")
-        rows = db.q(sql, (e.wf, since if since is not None else (e.start_minute or 0), until or 10 ** 9, *vs))
+        rows = db.q(sql, (e.wf, since if since is not None else (e.start_minute if e.start_minute is not None else 0), until or 10 ** 9, *vs))
         out: dict[str, dict[str, tuple]] = {"ALL": {}}
         for c, o, n, k, g in rows:
             opt = db.decode(e.dim, o)
@@ -252,7 +252,7 @@ class ExperimentEngine:
         """Recent-window check: the last 24h lift must not be significantly below the whole-window lift, and must
         not itself be negative. Guards against promoting a variant whose effect is already wearing off."""
         s = self.s
-        recent = self.arm_counts(e, since=max(e.start_minute or 0, now - s.decay_window_minutes), until=now)["ALL"]
+        recent = self.arm_counts(e, since=max(e.start_minute if e.start_minute is not None else 0, now - s.decay_window_minutes), until=now)["ALL"]
         i = recent.get(e.incumbent, (0, 0, 0))
         out = {}
         for o in opts:
@@ -346,7 +346,7 @@ class ExperimentEngine:
     def decay_check(self, e: Experiment, now: int, cohorts: list[Cohort]) -> dict:
         """Winner vs holdout over the recent window, compared with the lift measured at promotion."""
         s = self.s
-        since = max(e.promoted_minute or now, now - s.decay_window_minutes)
+        since = max(e.promoted_minute if e.promoted_minute is not None else now, now - s.decay_window_minutes)
         counts = self.arm_counts(e, since=since, cohorts=cohorts, until=now)
         out = {"window_start": since, "scopes": {}, "decayed": []}
         for scope, pr in e.promo.items():
@@ -355,7 +355,7 @@ class ExperimentEngine:
                 # pooled scope excludes cohorts that have their own override
                 cc = {}
                 for c, v in counts.items():
-                    if c == "ALL" or c in e.plan:
+                    if c == "ALL" or (c != "default" and c in e.plan):   # cohorts with their own override
                         continue
                     for o, t in v.items():
                         a = cc.get(o, (0, 0, 0))

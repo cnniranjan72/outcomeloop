@@ -83,12 +83,15 @@ class DB:
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self.conn.execute("PRAGMA cache_size=-200000")  # ~200 MB page cache
         self.conn.executescript(SCHEMA)
+        self._load_codes()
+        self._in_tx = False
+
+    def _load_codes(self):
         self._codes: dict[tuple[str, str], int] = {}
         self._rev: dict[tuple[str, int], str] = {}
         for kind, value, code in self.conn.execute("SELECT kind, value, code FROM codes"):
             self._codes[(kind, value)] = code
             self._rev[(kind, code)] = value
-        self._in_tx = False
 
     # ------------------------------------------------------------------ transactions
     def begin(self):
@@ -103,6 +106,9 @@ class DB:
         if self._in_tx:
             self.conn.execute("ROLLBACK")
             self._in_tx = False
+            # codes created inside the rolled-back transaction are gone from the table: drop them from the
+            # cache too, or a later commit would write rows with a code whose mapping was never persisted
+            self._load_codes()
 
     class _Tx:
         def __init__(self, db: "DB"):

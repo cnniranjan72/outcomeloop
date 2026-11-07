@@ -86,6 +86,15 @@ class Ingestor:
         return n
 
     def ingest_chunk(self, meta: dict) -> int:
+        try:
+            return self._ingest_chunk(meta)
+        except BaseException:
+            # the transaction rolled back: persons first seen in this chunk were not persisted, so the in-memory
+            # feature store must forget them too (else a retry would skip their `persons` rows)
+            self.features = FeatureStore(self.db)
+            raise
+
+    def _ingest_chunk(self, meta: dict) -> int:
         t0 = time.perf_counter()
         db = self.db
         code = db.code
