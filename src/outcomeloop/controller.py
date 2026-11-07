@@ -80,6 +80,7 @@ class Controller:
         self.urgent: set[int] = set()   # workflows to decide on at the next tick regardless of cadence
         self.t_start = time.time()
         self.day_wall: dict[int, float] = {}
+        self.day_acc: dict[int, dict] = {}
 
     # ------------------------------------------------------------------ world identity
     def _prepare_db(self):
@@ -162,6 +163,7 @@ class Controller:
             hourly = self.now % self.s.decision_every_minutes == 0
             due = sorted(self.specs) if hourly else sorted(self.urgent)
             self.urgent = set()
+            td = time.time()
             if due:
                 for wf in due:
                     try:
@@ -170,13 +172,16 @@ class Controller:
                         log.error("decide %s failed: %s", self.specs[wf]["workflow_id"], e)
                         with self.db.tx():
                             self.db.decide(self.now, wf, "error", f"decision step failed: {e}")
+            decide_s = time.time() - td
+            ta = time.time()
             st = self._advance()
             if st is None:
                 break
+            advance_s = time.time() - ta
             t0 = time.time()
             n = self.ing.ingest_all()
             self.handle_inbox()
-            self._metrics(n, time.time() - t0, st)
+            self._metrics(n, time.time() - t0, st, decide_s, advance_s)
             if st["finished"]:
                 break
         self.finish()
@@ -334,8 +339,10 @@ class Controller:
     # ---- caller ID (C5)
     def detect_did(self, wf, spec, now, ctx) -> dict:
         opts = spec["options"]["caller_id"]
-        health = did_health(self.db, wf, opts, now, self.s)
         mem = self.db.kv_get(f"did:{wf}", {})
+        cur_alloc = self.sim.config(spec["workflow_id"])["config"]["allocations"]["default"]["caller_id"]
+        probing = {d for d in opts if mem.get(d, {}).get("state", "unknown") in ("unknown", "probe")}
+        health = did_health(self.db, wf, opts, now, self.s, probing)
         changed = []
         for d, h in health.items():
             prev = mem.get(d, {}).get("state", "unknown")
@@ -641,7 +648,7 @@ class Controller:
                 continue
             if e.status == "running":
                 due_look = (now % 1440) // 60 == look_hour and now - (e.start_minute or now) >= 20 * 60
-                final = now - (e.start_minute or now) >= self.s.max_experiment_days * 1440
+                final = now - (e.start_minute or now) >= e.horizon_days * 1440
                 if due_look or final:
                     res = self.exp.look(e, now, cohorts, {"margin": margin}, final)
                     e.looks.append({k: v for k, v in res.items() if k != "cohort_check"} | {"cohort_check": res.get("cohort_check")})
@@ -686,7 +693,14 @@ class Controller:
 
     def _apply_look(self, e: Experiment, res: dict, now: int, wf: int):
         a = res["action"]
-        if a in ("promote", "promote_cohorts"):
+        if a == "extend":
+            self.db.decide(now, wf, "experiment_extended", f"{e.dim}: horizon reached without significance but the best"
+                           f" challenger trends positive — extending once to {e.horizon_days:.0f} days",
+                           evidence=res, experiment_id=e.experiment_id,
+                           reasoning="pre-registered single extension when under-powered; alpha is tracked as an explicit"
+                                     f" budget (spent so far {e.alpha_spent:.4f} of {self.s.alpha}) so the family-wise"
+                                     " false-winner rate stays <= alpha")
+        elif a in ("promote", "promote_cohorts"):
             self.exp.plan_promotion(e, res)
             self.db.decide(now, wf, "experiment_winner",
                            f"{e.dim}: winner {e.winner} (look t={res['t']}, alpha_look={res.get('alpha_look')})",
@@ -1025,13 +1039,23 @@ class Controller:
         return best, detail
 
     # ------------------------------------------------------------------ observability (C14)
-    def _metrics(self, n_events: int, ingest_s: float, st: dict):
+    def _metrics(self, n_events: int, ingest_s: float, st: dict, decide_s: float = 0.0, advance_s: float = 0.0):
         db, now = self.db, self.now
+        acc = self.day_acc.setdefault(now // 1440 if now % 1440 else now // 1440 - 1,
+                                      {"events": 0, "ingest_s": 0.0, "decide_s": 0.0, "advance_s": 0.0,
+                                       "max_tick_controller_s": 0.0})
+        acc["events"] += n_events
+        acc["ingest_s"] += ingest_s
+        acc["decide_s"] += decide_s
+        acc["advance_s"] += advance_s
+        acc["max_tick_controller_s"] = max(acc["max_tick_controller_s"], ingest_s + decide_s)
         lag = st["sim_minute"] - (db.q1("SELECT MAX(until_minute) FROM chunks")[0] or 0)
         with db.tx():
             db.metric(now, "ingest_events", n_events)
             db.metric(now, "ingest_seconds", ingest_s)
             db.metric(now, "ingest_lag_minutes", lag)
+            db.metric(now, "decide_seconds", decide_s)
+            db.metric(now, "advance_seconds", advance_s)
             if now % 60 == 0:
                 st = self.sim.state()
                 db.metric(now, "credits_remaining", st["credits_remaining"])
@@ -1045,6 +1069,9 @@ class Controller:
                 w0 = self.day_wall.get(d)
                 if w0:
                     db.metric(now, "wall_seconds_per_sim_day", time.time() - w0, {"day": d})
+                    a = self.day_acc.get(d, {})
+                    db.metric(now, "controller_seconds_per_sim_day", a.get("ingest_s", 0) + a.get("decide_s", 0),
+                              {"day": d, **{k: round(v, 2) for k, v in a.items()}})
                     log.info("D%d done: %.1fs wall, credits %.0f, ingest total %d events", d, time.time() - w0,
                              st["credits_remaining"], self.ing.events_total)
 

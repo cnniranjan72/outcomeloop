@@ -46,6 +46,9 @@ class Experiment:
     n_plan: int = 0
     achieved_mde: float = 0.0
     t_prev: float = 0.0
+    alpha_spent: float = 0.0
+    horizon_days: float = 5.0
+    extended: bool = False
     looks: list[dict] = field(default_factory=list)
     winner: str | None = None
     plan: dict = field(default_factory=dict)          # target allocations: {"default": {...}, cohort: {...}}
@@ -124,6 +127,7 @@ class ExperimentEngine:
                        design={o: round(w, 4) for o, w in design.items()}, created_minute=now, p_base=round(p_base, 4),
                        n_plan=n_plan, achieved_mde=round(achieved_mde(p_base, n_plan, a_each, s.power, ratio), 4))
         e.plan = {"default": e.design}
+        e.horizon_days = s.max_experiment_days
         return e
 
     # ------------------------------------------------------------------ config sync
@@ -198,9 +202,15 @@ class ExperimentEngine:
             if harmful:
                 res["action"], res["drop"] = "drop", harmful
             return res
-        a_look = (s.alpha - obf_spent(e.t_prev, s.alpha)) if horizon else look_alpha(e.t_prev, t_now, s.alpha)
+        remaining = max(s.alpha - e.alpha_spent, 0.0)
+        if horizon:
+            # first horizon keeps half of what is left in reserve for a possible extension's final look
+            a_look = remaining if e.extended else remaining / 2
+        else:
+            a_look = min(look_alpha(e.t_prev, t_now, s.alpha), remaining)
         res["alpha_look"] = float(f"{a_look:.3g}")
         e.t_prev = t_now
+        e.alpha_spent += a_look
         winners = holm({o: cmps[o].p_one_sided for o in challengers}, a_look)
         # guardrail: block when the point drop exceeds the margin, or a significant drop exceeds half of it
         margin = guardrail.get("margin", 0.02)
@@ -224,6 +234,15 @@ class ExperimentEngine:
             res["action"], res["cohort_winners"] = "promote_cohorts", cw
             return res
         if horizon:
+            best = max(challengers, key=lambda o: cmps[o].diff)
+            if not e.extended and cmps[best].diff > 0 and allc.get(best, (0, 0, 0))[1] >= s.min_arm_connected_for_look:
+                # pre-registered single extension; the final look of the extension spends what alpha is left
+                e.extended = True
+                e.n_plan *= 2
+                e.horizon_days *= 2
+                e.t_prev = t_now / 2
+                res["action"], res["extend_best"] = "extend", best
+                return res
             res["action"] = "no_winner"
         elif harmful:
             res["action"], res["drop"] = "drop", harmful

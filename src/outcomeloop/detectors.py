@@ -6,7 +6,8 @@ from .db import DB
 from .stats import Prop, binom_excess, compare
 
 
-def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings) -> dict[str, dict]:
+def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings,
+               probing: set[str] | None = None) -> dict[str, dict]:
     """Classify each caller ID as healthy (measured and fine) / degraded / unknown (not enough data).
 
     Caller ID is randomised per dial, so within a window every DID sees the same hour and person mix in
@@ -34,12 +35,19 @@ def did_health(db: DB, wf: int, options: list[str], now: int, s: Settings) -> di
                 continue
             cmp_ = compare(Prop(oc, on), Prop(c, n))
             ratio = (c / n) / (oc / on) if oc else 1.0
+            # delta-method SE of the ratio; "healthy" needs the ~84% lower bound above the degraded line
+            p1, p0 = (c + 1) / (n + 2), (oc + 1) / (on + 2)
+            se_ratio = ratio * ((1 - p1) / (n * p1) + (1 - p0) / (on * p0)) ** 0.5
             rec["windows"][name] = {"dials": n, "connected": c, "pickup": round(c / n, 4),
                                     "others_pickup": round(oc / on, 4), "ratio": round(ratio, 3), "z": round(cmp_.z, 2)}
+            rec["windows"][name]["ratio_lcb"] = round(ratio - se_ratio, 3)
             if n >= s.did_min_dials and ratio < s.did_degraded_ratio and cmp_.z < -s.did_degraded_z:
                 degraded = True
-            if name == "slow" and n >= s.did_healthy_min_dials and ratio >= s.did_degraded_ratio:
-                healthy = True   # measured, and not meaningfully worse than the other numbers
+            # a number on probe only has to show it is bad to stay out (low-risk action): lower bar
+            if probing and opt in probing and n >= s.did_healthy_min_dials and ratio < s.did_degraded_ratio                     and cmp_.z < -2.33:
+                degraded = True
+            if name == "slow" and n >= s.did_healthy_min_dials and ratio - se_ratio >= s.did_degraded_ratio:
+                healthy = True   # measured, and confidently not meaningfully worse than the other numbers
         rec["state"] = "degraded" if degraded else ("healthy" if healthy else "unknown")
         out[opt] = rec
     return out
