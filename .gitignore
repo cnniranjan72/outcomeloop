@@ -10,3 +10,4 @@ state/
 *.old-wal
 *.old-shm
 .pytest_cache/
+tests/robustness/*_s[0-9]*.yaml

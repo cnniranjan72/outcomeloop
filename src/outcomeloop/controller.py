@@ -789,7 +789,7 @@ class Controller:
                            and compare(Prop(inc[2], inc[1]), Prop(counts[o][2], counts[o][1])).z < -2.33]
                     if bad and set(bad) - set(e.dropped):
                         with db.tx():
-                            self._blacklist(wf, bad)
+                            self._blacklist(wf, bad, days=self.s.harm_blacklist_days)
                             self.exp.plan_drop(e, bad)
                             e.save(db, now)
                             db.decide(now, wf, "experiment_drop_arm", f"{dim}: dropping {bad} (significantly worse)",
@@ -809,10 +809,12 @@ class Controller:
                     ctx["kinds"].append("decay_rollback")
                     ctx["urgent"] = True
 
-    def _blacklist(self, wf: int, opts: list[str]):
+    def _blacklist(self, wf: int, opts: list[str], days: float | None = None):
+        """Options we have evidence against are not re-tested for a while: 7 days after a decay rollback,
+        14 days after being dropped as significantly worse than the incumbent."""
         black = self.db.kv_get(f"blacklist:{wf}", {})
         for o in opts:
-            black[o] = self.now + int(self.s.rollback_blacklist_days * 1440)
+            black[o] = max(black.get(o, 0), self.now + int((days or self.s.rollback_blacklist_days) * 1440))
         self.db.kv_set(f"blacklist:{wf}", black)
 
     def _apply_look(self, e: Experiment, res: dict, now: int, wf: int):
@@ -838,7 +840,7 @@ class Controller:
                            f" incumbent {e.incumbent}", evidence=res, experiment_id=e.experiment_id,
                            reasoning="insufficient evidence keeps the incumbent")
         elif a == "drop":
-            self._blacklist(wf, res["drop"])
+            self._blacklist(wf, res["drop"], days=self.s.harm_blacklist_days)
             self.exp.plan_drop(e, res["drop"])
             self.db.decide(now, wf, "experiment_drop_arm", f"{e.dim}: dropping {res['drop']}", evidence=res,
                            experiment_id=e.experiment_id)

@@ -381,7 +381,8 @@ class ExperimentEngine:
                 rec.update({"lift_now": round(now_c.diff, 4), "z_now": round(now_c.z, 2),
                             "lift_at_promotion": round(pr["diff"], 4), "promotion_lcb80": round(promo_ref, 4),
                             "z_vs_promotion": round(zd, 2)})
-                if zd < -s.decay_z or (now_c.diff < 0 and now_c.z < -s.harm_z):
+                # both clauses at the stricter level: this check repeats hourly over overlapping windows
+                if zd < -s.decay_z or (now_c.diff < 0 and now_c.z < -s.decay_z):
                     out["decayed"].append(scope)
             out["scopes"][scope] = rec
         return out
