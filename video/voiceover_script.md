@@ -114,13 +114,13 @@ adjust the `--at` argument and the narration in Scenes 3 and 5.
 ## Scene 6: Results (03:45–04:30, about 100 words)
 
 > These are the grader's reports against a no-op baseline. On the development scenario the conclusion rate
-> rose 13.9% against the baseline. On the incidents scenario it rose 25.6%. The unsafe
-> prompt was fixed in 60 minutes, and the spam-flagged caller ID dropped to zero share. The grader also
+> rose 12.5% against the baseline. On the incidents scenario it rose 24.6%. The unsafe
+> prompt was fixed in 105 minutes, and the spam-flagged caller ID dropped to zero share. The grader also
 > marks a few experiment launches as harmful. Exploring costs something, and we report it rather than hide
 > it.
 >
-> On the load scenario we ingest about 55,000 events per second and spend 72 to 89
-> seconds of controller time per simulated day, at 494 megabytes peak memory. The test suite has 176 tests, all passing.
+> On the load scenario we ingest about 41,000 events per second and spend 42 to 53
+> seconds of controller time per simulated day, at 1046 megabytes peak memory. The test suite has 199 tests, all passing.
 
 ## Scene 7: Conclusion (04:30–05:00, about 68 words)
 

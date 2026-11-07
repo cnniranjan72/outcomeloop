@@ -96,3 +96,19 @@ failure modes above.
   0 mismatches on 95k calls).
 - Final evidence on the final decision logic: public_01 +13.9 % (0 harmful), public_02 +25.6 % (MTTR 60 min),
   load ~55k events/s and 72–89 s controller time per simulated day, crash recovery PASS (20/0), 174 + 2 tests.
+
+## 2026-11-08 — measurement-driven upgrades and adversarial hardening
+
+- **Profiled** public_03: decisions spent most time re-aggregating raw call rows (caller-ID health 59 %, decay 20 %).
+  **Hourly rollups** maintained in the ingest transaction (recomputed per touched hour → replay-safe): controller
+  time per simulated day 72–89 s → 42–53 s.
+- **Per-person call time** as a randomised, self-terminating experiment; **ablation** over 16 paired runs: +0.93 pp
+  (t = 2.48) → kept on.
+- **Interaction check** before promotion; **post-apply verification** of every applied change.
+- **Adversarial hardening**: single-instance lock; 429/jitter; chunk fetched and parsed as a unit; corrupted-store
+  recovery (found a connection leak on that path); context-less orphan approvals adopted as WITHDRAWN.
+  `docs/ADVERSARIAL_TESTING.md` lists 32 attacks with fixes and tests.
+- **Measured scaling** 1× vs 3× in a 4 vCPU / 8 GB container: linear (2.7× cost for 3× load).
+- **Supply chain**: `requirements.lock.txt` (pip-audit clean) used by the Dockerfile.
+- Final evidence on `51965ce`: suite 16/16 exit 0, 0 decision errors, 0 false winners in 16 null experiments;
+  crash PASS 20/0; public_01 +12.5 % (0 harmful), public_02 +24.6 % (MTTR 105 min); 197 + 2 tests.

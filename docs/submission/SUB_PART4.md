@@ -85,7 +85,7 @@ world. Memory stays small because analysis is SQL over an on-disk table; only pe
 The review question, answered from our store only (real output, public_02, trimmed):
 
 ```
-$ python -m outcomeloop --db state/public_02_incidents.db why ks_cancel --at "D3 12:30"
+$ python -m outcomeloop --db state/public_02_incidents.db why ks_cancel --at "D3 13:15"
 {{WHY_OUTPUT}}
 ```
 

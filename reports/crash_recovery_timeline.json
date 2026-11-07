@@ -6,13 +6,13 @@
   "platform": "win32",
   "python": "3.12.10",
   "kill_method": "subprocess.Popen.kill() (SIGKILL on POSIX, TerminateProcess on Windows)",
-  "started": "2026-11-07T19:36:40.570+05:30",
+  "started": "2026-11-07T21:28:10.887+05:30",
   "launches": [
     {
       "launch": 1,
-      "pid": 19708,
-      "started_wall": "2026-11-07T19:36:49.181+05:30",
-      "started_epoch": 1794060409.181975,
+      "pid": 6216,
+      "started_wall": "2026-11-07T21:28:19.527+05:30",
+      "started_epoch": 1794067099.5272503,
       "sim_minute_at_launch": 0,
       "sim_label_at_launch": "D0 00:00",
       "db_at_launch": {
@@ -24,8 +24,8 @@
         "max_decision_id": null,
         "proposals_by_state": null
       },
-      "ended_wall": "2026-11-07T19:36:51.829+05:30",
-      "ended_epoch": 1794060411.8003297,
+      "ended_wall": "2026-11-07T21:28:22.507+05:30",
+      "ended_epoch": 1794067102.4811454,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -33,9 +33,9 @@
         "attempt": 1,
         "aim": "during history ingestion",
         "trigger": "targeted",
-        "reason": "history backlog ingestion in progress: workflows registered, 0 chunks committed, 1.0s into ingest (2.6s after launch)",
+        "reason": "history backlog ingestion in progress: workflows registered, 0 chunks committed, 1.0s into ingest (3.0s after launch)",
         "landed_on_target_state": true,
-        "elapsed_since_launch_s": 2.618,
+        "elapsed_since_launch_s": 2.954,
         "startup_done_before_kill": false,
         "sim_minute_last_polled": 0,
         "sim_label_last_polled": "D0 00:00",
@@ -72,9 +72,9 @@
     },
     {
       "launch": 2,
-      "pid": 5724,
-      "started_wall": "2026-11-07T19:36:51.845+05:30",
-      "started_epoch": 1794060411.8459477,
+      "pid": 4392,
+      "started_wall": "2026-11-07T21:28:22.520+05:30",
+      "started_epoch": 1794067102.5207863,
       "sim_minute_at_launch": 0,
       "sim_label_at_launch": "D0 00:00",
       "db_at_launch": {
@@ -86,8 +86,8 @@
         "max_decision_id": 0,
         "proposals_by_state": {}
       },
-      "ended_wall": "2026-11-07T19:36:59.137+05:30",
-      "ended_epoch": 1794060419.1010273,
+      "ended_wall": "2026-11-07T21:28:31.324+05:30",
+      "ended_epoch": 1794067111.2852802,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -97,7 +97,7 @@
         "trigger": "targeted",
         "reason": "proposal ol-nw_renewal-600-3 is PENDING (approval apr_00001)",
         "landed_on_target_state": true,
-        "elapsed_since_launch_s": 7.255,
+        "elapsed_since_launch_s": 8.764,
         "startup_done_before_kill": true,
         "sim_minute_last_polled": 600,
         "sim_label_last_polled": "D0 10:00",
@@ -114,8 +114,8 @@
         "events_ingested": 191279,
         "ingested_until_minute": 600,
         "calls": 141732,
-        "decisions": 22,
-        "max_decision_id": 22,
+        "decisions": 24,
+        "max_decision_id": 24,
         "proposals_by_state": {
           "APPLIED": 2,
           "PENDING": 1
@@ -176,10 +176,22 @@
         },
         "last_decisions": [
           {
-            "decision_id": 22,
+            "decision_id": 24,
             "minute": 600,
             "kind": "proposal_submitted",
-            "summary": "ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; welcome_message: designed default=W1 60%,W2 20%,W3 20%; voice: designed def"
+            "summary": "ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 327 treated people (testing); welcome_messag"
+          },
+          {
+            "decision_id": 23,
+            "minute": 540,
+            "kind": "person_time_refresh",
+            "summary": "per-person call time (testing): 387 treated people with a preferred hour"
+          },
+          {
+            "decision_id": 22,
+            "minute": 540,
+            "kind": "person_time_refresh",
+            "summary": "per-person call time (testing): 327 treated people with a preferred hour"
           },
           {
             "decision_id": 21,
@@ -198,27 +210,15 @@
             "minute": 0,
             "kind": "auto_apply",
             "summary": "auto-apply ['caller_id'] -> APPLIED"
-          },
-          {
-            "decision_id": 18,
-            "minute": 0,
-            "kind": "hold",
-            "summary": "['cohorts', 'welcome_message', 'voice'] waiting: outside approver hours [11,19)"
-          },
-          {
-            "decision_id": 17,
-            "minute": 0,
-            "kind": "experiment_designed",
-            "summary": "voice: test ['V1', 'V2', 'V3', 'V4'] (incumbent V1 keeps 60%)"
           }
         ]
       }
     },
     {
       "launch": 3,
-      "pid": 12492,
-      "started_wall": "2026-11-07T19:36:59.181+05:30",
-      "started_epoch": 1794060419.1817272,
+      "pid": 13016,
+      "started_wall": "2026-11-07T21:28:31.357+05:30",
+      "started_epoch": 1794067111.3571885,
       "sim_minute_at_launch": 600,
       "sim_label_at_launch": "D0 10:00",
       "db_at_launch": {
@@ -226,15 +226,15 @@
         "chunks": 7,
         "events_ingested": 191279,
         "calls": 141732,
-        "decisions": 22,
-        "max_decision_id": 22,
+        "decisions": 24,
+        "max_decision_id": 24,
         "proposals_by_state": {
           "APPLIED": 2,
           "PENDING": 1
         }
       },
-      "ended_wall": "2026-11-07T19:37:01.710+05:30",
-      "ended_epoch": 1794060421.678997,
+      "ended_wall": "2026-11-07T21:28:34.003+05:30",
+      "ended_epoch": 1794067113.9756882,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -244,7 +244,7 @@
         "trigger": "targeted",
         "reason": "approval apr_00003 (ol-ks_cancel-660-5) is 'approved' at the simulator, our row still PENDING (not yet applied)",
         "landed_on_target_state": false,
-        "elapsed_since_launch_s": 2.497,
+        "elapsed_since_launch_s": 2.618,
         "startup_done_before_kill": true,
         "sim_minute_last_polled": 735,
         "sim_label_last_polled": "D0 12:15",
@@ -261,332 +261,6 @@
         "events_ingested": 193079,
         "ingested_until_minute": 720,
         "calls": 143532,
-        "decisions": 26,
-        "max_decision_id": 26,
-        "proposals_by_state": {
-          "APPLIED": 2,
-          "PENDING": 3
-        },
-        "experiments_by_status": {
-          "designed": 6
-        },
-        "incidents_by_state": {},
-        "credits_ledger_by_state": {},
-        "inbox_undone": 0,
-        "bootstrapped_workflows": 3,
-        "in_flight": {
-          "open_proposals": [
-            {
-              "proposal_id": "ol-nw_renewal-600-3",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00001",
-              "base_version": 2
-            },
-            {
-              "proposal_id": "ol-nw_kyc-660-4",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00002",
-              "base_version": 1
-            },
-            {
-              "proposal_id": "ol-ks_cancel-660-5",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00003",
-              "base_version": 2
-            }
-          ],
-          "credits_ledger_sent": [],
-          "pending_prompt_probes": [],
-          "open_incidents": [],
-          "active_experiments": [
-            {
-              "experiment_id": "exp-0-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-0-voice-0",
-              "dim": "voice",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-1-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-1-voice-0",
-              "dim": "voice",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-2-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-2-voice-0",
-              "dim": "voice",
-              "status": "designed"
-            }
-          ]
-        },
-        "last_decisions": [
-          {
-            "decision_id": 26,
-            "minute": 660,
-            "kind": "proposal_submitted",
-            "summary": "ol-ks_cancel-660-5 -> PENDING: call-hour weights for 4 cohorts; welcome_message: designed default=W1 60%,W2 20%,W3 20%; voice: designed defa"
-          },
-          {
-            "decision_id": 25,
-            "minute": 660,
-            "kind": "proposal_submitted",
-            "summary": "ol-nw_kyc-660-4 -> PENDING: call-hour weights for 4 cohorts; caller IDs: D1 90%, D2 5%, D3 5%; welcome_message: designed default=W1 60%,W2 4"
-          },
-          {
-            "decision_id": 24,
-            "minute": 600,
-            "kind": "hold",
-            "summary": "['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] waiting: worst-case decision D1 10:00 would be after expiry"
-          },
-          {
-            "decision_id": 23,
-            "minute": 600,
-            "kind": "controller_restart",
-            "summary": "restarted at D0 10:00; ingested 0 events in 0.0s"
-          },
-          {
-            "decision_id": 22,
-            "minute": 600,
-            "kind": "proposal_submitted",
-            "summary": "ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; welcome_message: designed default=W1 60%,W2 20%,W3 20%; voice: designed def"
-          },
-          {
-            "decision_id": 21,
-            "minute": 0,
-            "kind": "config_changed",
-            "summary": "v2 by controller_auto: caller_id"
-          }
-        ]
-      }
-    },
-    {
-      "launch": 4,
-      "pid": 21796,
-      "started_wall": "2026-11-07T19:37:01.760+05:30",
-      "started_epoch": 1794060421.760764,
-      "sim_minute_at_launch": 735,
-      "sim_label_at_launch": "D0 12:15",
-      "db_at_launch": {
-        "db_exists": true,
-        "chunks": 15,
-        "events_ingested": 193079,
-        "calls": 143532,
-        "decisions": 26,
-        "max_decision_id": 26,
-        "proposals_by_state": {
-          "APPLIED": 2,
-          "PENDING": 3
-        }
-      },
-      "ended_wall": "2026-11-07T19:37:03.294+05:30",
-      "ended_epoch": 1794060423.232036,
-      "exit_code": 1,
-      "outcome": "hard-killed",
-      "kill": {
-        "label": "d",
-        "attempt": 2,
-        "aim": "approval APPROVED/APPLYING (approved, not yet applied)",
-        "trigger": "targeted",
-        "reason": "approval apr_00003 (ol-ks_cancel-660-5) is 'approved' at the simulator, our row still PENDING (not yet applied)",
-        "landed_on_target_state": false,
-        "elapsed_since_launch_s": 1.471,
-        "startup_done_before_kill": true,
-        "sim_minute_last_polled": 735,
-        "sim_label_last_polled": "D0 12:15",
-        "sim_minute_after_kill": 735,
-        "sim_label_after_kill": "D0 12:15",
-        "sim_last_event_id": 193305,
-        "sim_chunks": 16,
-        "sim_credits_remaining": 200.0
-      },
-      "db_after_kill": {
-        "db_exists": true,
-        "chunks": 16,
-        "max_chunk": 15,
-        "events_ingested": 193305,
-        "ingested_until_minute": 735,
-        "calls": 143757,
-        "decisions": 27,
-        "max_decision_id": 27,
-        "proposals_by_state": {
-          "APPLIED": 2,
-          "PENDING": 3
-        },
-        "experiments_by_status": {
-          "designed": 6
-        },
-        "incidents_by_state": {},
-        "credits_ledger_by_state": {},
-        "inbox_undone": 1,
-        "bootstrapped_workflows": 3,
-        "in_flight": {
-          "open_proposals": [
-            {
-              "proposal_id": "ol-nw_renewal-600-3",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00001",
-              "base_version": 2
-            },
-            {
-              "proposal_id": "ol-nw_kyc-660-4",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00002",
-              "base_version": 1
-            },
-            {
-              "proposal_id": "ol-ks_cancel-660-5",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00003",
-              "base_version": 2
-            }
-          ],
-          "credits_ledger_sent": [],
-          "pending_prompt_probes": [],
-          "open_incidents": [],
-          "active_experiments": [
-            {
-              "experiment_id": "exp-0-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-0-voice-0",
-              "dim": "voice",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-1-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-1-voice-0",
-              "dim": "voice",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-2-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "designed"
-            },
-            {
-              "experiment_id": "exp-2-voice-0",
-              "dim": "voice",
-              "status": "designed"
-            }
-          ]
-        },
-        "last_decisions": [
-          {
-            "decision_id": 27,
-            "minute": 735,
-            "kind": "controller_restart",
-            "summary": "restarted at D0 12:15; ingested 226 events in 0.0s"
-          },
-          {
-            "decision_id": 26,
-            "minute": 660,
-            "kind": "proposal_submitted",
-            "summary": "ol-ks_cancel-660-5 -> PENDING: call-hour weights for 4 cohorts; welcome_message: designed default=W1 60%,W2 20%,W3 20%; voice: designed defa"
-          },
-          {
-            "decision_id": 25,
-            "minute": 660,
-            "kind": "proposal_submitted",
-            "summary": "ol-nw_kyc-660-4 -> PENDING: call-hour weights for 4 cohorts; caller IDs: D1 90%, D2 5%, D3 5%; welcome_message: designed default=W1 60%,W2 4"
-          },
-          {
-            "decision_id": 24,
-            "minute": 600,
-            "kind": "hold",
-            "summary": "['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] waiting: worst-case decision D1 10:00 would be after expiry"
-          },
-          {
-            "decision_id": 23,
-            "minute": 600,
-            "kind": "controller_restart",
-            "summary": "restarted at D0 10:00; ingested 0 events in 0.0s"
-          },
-          {
-            "decision_id": 22,
-            "minute": 600,
-            "kind": "proposal_submitted",
-            "summary": "ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; welcome_message: designed default=W1 60%,W2 20%,W3 20%; voice: designed def"
-          }
-        ]
-      }
-    },
-    {
-      "launch": 5,
-      "pid": 12176,
-      "started_wall": "2026-11-07T19:37:03.325+05:30",
-      "started_epoch": 1794060423.325845,
-      "sim_minute_at_launch": 735,
-      "sim_label_at_launch": "D0 12:15",
-      "db_at_launch": {
-        "db_exists": true,
-        "chunks": 16,
-        "events_ingested": 193305,
-        "calls": 143757,
-        "decisions": 27,
-        "max_decision_id": 27,
-        "proposals_by_state": {
-          "APPLIED": 2,
-          "PENDING": 3
-        }
-      },
-      "ended_wall": "2026-11-07T19:37:04.860+05:30",
-      "ended_epoch": 1794060424.828915,
-      "exit_code": 1,
-      "outcome": "hard-killed",
-      "kill": {
-        "label": "d",
-        "attempt": 3,
-        "aim": "approval APPROVED/APPLYING (approved, not yet applied)",
-        "trigger": "targeted",
-        "reason": "approval apr_00003 (ol-ks_cancel-660-5) is 'approved' at the simulator, our row still PENDING (not yet applied)",
-        "landed_on_target_state": false,
-        "elapsed_since_launch_s": 1.503,
-        "startup_done_before_kill": true,
-        "sim_minute_last_polled": 735,
-        "sim_label_last_polled": "D0 12:15",
-        "sim_minute_after_kill": 735,
-        "sim_label_after_kill": "D0 12:15",
-        "sim_last_event_id": 193305,
-        "sim_chunks": 16,
-        "sim_credits_remaining": 200.0
-      },
-      "db_after_kill": {
-        "db_exists": true,
-        "chunks": 16,
-        "max_chunk": 15,
-        "events_ingested": 193305,
-        "ingested_until_minute": 735,
-        "calls": 143757,
         "decisions": 28,
         "max_decision_id": 28,
         "proposals_by_state": {
@@ -598,7 +272,7 @@
         },
         "incidents_by_state": {},
         "credits_ledger_by_state": {},
-        "inbox_undone": 1,
+        "inbox_undone": 0,
         "bootstrapped_workflows": 3,
         "in_flight": {
           "open_proposals": [
@@ -666,36 +340,362 @@
         "last_decisions": [
           {
             "decision_id": 28,
-            "minute": 735,
-            "kind": "controller_restart",
-            "summary": "restarted at D0 12:15; ingested 0 events in 0.0s"
+            "minute": 660,
+            "kind": "proposal_submitted",
+            "summary": "ol-ks_cancel-660-5 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 387 treated people (testing); welcome_message"
           },
           {
             "decision_id": 27,
-            "minute": 735,
-            "kind": "controller_restart",
-            "summary": "restarted at D0 12:15; ingested 226 events in 0.0s"
-          },
-          {
-            "decision_id": 26,
-            "minute": 660,
-            "kind": "proposal_submitted",
-            "summary": "ol-ks_cancel-660-5 -> PENDING: call-hour weights for 4 cohorts; welcome_message: designed default=W1 60%,W2 20%,W3 20%; voice: designed defa"
-          },
-          {
-            "decision_id": 25,
             "minute": 660,
             "kind": "proposal_submitted",
             "summary": "ol-nw_kyc-660-4 -> PENDING: call-hour weights for 4 cohorts; caller IDs: D1 90%, D2 5%, D3 5%; welcome_message: designed default=W1 60%,W2 4"
           },
           {
-            "decision_id": 24,
+            "decision_id": 26,
             "minute": 600,
             "kind": "hold",
             "summary": "['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] waiting: worst-case decision D1 10:00 would be after expiry"
           },
           {
+            "decision_id": 25,
+            "minute": 600,
+            "kind": "controller_restart",
+            "summary": "restarted at D0 10:00; ingested 0 events in 0.0s"
+          },
+          {
+            "decision_id": 24,
+            "minute": 600,
+            "kind": "proposal_submitted",
+            "summary": "ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 327 treated people (testing); welcome_messag"
+          },
+          {
             "decision_id": 23,
+            "minute": 540,
+            "kind": "person_time_refresh",
+            "summary": "per-person call time (testing): 387 treated people with a preferred hour"
+          }
+        ]
+      }
+    },
+    {
+      "launch": 4,
+      "pid": 11740,
+      "started_wall": "2026-11-07T21:28:34.042+05:30",
+      "started_epoch": 1794067114.0424023,
+      "sim_minute_at_launch": 735,
+      "sim_label_at_launch": "D0 12:15",
+      "db_at_launch": {
+        "db_exists": true,
+        "chunks": 15,
+        "events_ingested": 193079,
+        "calls": 143532,
+        "decisions": 28,
+        "max_decision_id": 28,
+        "proposals_by_state": {
+          "APPLIED": 2,
+          "PENDING": 3
+        }
+      },
+      "ended_wall": "2026-11-07T21:28:36.016+05:30",
+      "ended_epoch": 1794067115.98449,
+      "exit_code": 1,
+      "outcome": "hard-killed",
+      "kill": {
+        "label": "d",
+        "attempt": 2,
+        "aim": "approval APPROVED/APPLYING (approved, not yet applied)",
+        "trigger": "targeted",
+        "reason": "approval apr_00003 (ol-ks_cancel-660-5) is 'approved' at the simulator, our row still PENDING (not yet applied)",
+        "landed_on_target_state": false,
+        "elapsed_since_launch_s": 1.942,
+        "startup_done_before_kill": true,
+        "sim_minute_last_polled": 735,
+        "sim_label_last_polled": "D0 12:15",
+        "sim_minute_after_kill": 735,
+        "sim_label_after_kill": "D0 12:15",
+        "sim_last_event_id": 193305,
+        "sim_chunks": 16,
+        "sim_credits_remaining": 200.0
+      },
+      "db_after_kill": {
+        "db_exists": true,
+        "chunks": 16,
+        "max_chunk": 15,
+        "events_ingested": 193305,
+        "ingested_until_minute": 735,
+        "calls": 143757,
+        "decisions": 29,
+        "max_decision_id": 29,
+        "proposals_by_state": {
+          "APPLIED": 2,
+          "PENDING": 3
+        },
+        "experiments_by_status": {
+          "designed": 6
+        },
+        "incidents_by_state": {},
+        "credits_ledger_by_state": {},
+        "inbox_undone": 1,
+        "bootstrapped_workflows": 3,
+        "in_flight": {
+          "open_proposals": [
+            {
+              "proposal_id": "ol-nw_renewal-600-3",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00001",
+              "base_version": 2
+            },
+            {
+              "proposal_id": "ol-nw_kyc-660-4",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00002",
+              "base_version": 1
+            },
+            {
+              "proposal_id": "ol-ks_cancel-660-5",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00003",
+              "base_version": 2
+            }
+          ],
+          "credits_ledger_sent": [],
+          "pending_prompt_probes": [],
+          "open_incidents": [],
+          "active_experiments": [
+            {
+              "experiment_id": "exp-0-welcome_message-0",
+              "dim": "welcome_message",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-0-voice-0",
+              "dim": "voice",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-1-welcome_message-0",
+              "dim": "welcome_message",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-1-voice-0",
+              "dim": "voice",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-2-welcome_message-0",
+              "dim": "welcome_message",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-2-voice-0",
+              "dim": "voice",
+              "status": "designed"
+            }
+          ]
+        },
+        "last_decisions": [
+          {
+            "decision_id": 29,
+            "minute": 735,
+            "kind": "controller_restart",
+            "summary": "restarted at D0 12:15; ingested 226 events in 0.0s"
+          },
+          {
+            "decision_id": 28,
+            "minute": 660,
+            "kind": "proposal_submitted",
+            "summary": "ol-ks_cancel-660-5 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 387 treated people (testing); welcome_message"
+          },
+          {
+            "decision_id": 27,
+            "minute": 660,
+            "kind": "proposal_submitted",
+            "summary": "ol-nw_kyc-660-4 -> PENDING: call-hour weights for 4 cohorts; caller IDs: D1 90%, D2 5%, D3 5%; welcome_message: designed default=W1 60%,W2 4"
+          },
+          {
+            "decision_id": 26,
+            "minute": 600,
+            "kind": "hold",
+            "summary": "['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] waiting: worst-case decision D1 10:00 would be after expiry"
+          },
+          {
+            "decision_id": 25,
+            "minute": 600,
+            "kind": "controller_restart",
+            "summary": "restarted at D0 10:00; ingested 0 events in 0.0s"
+          },
+          {
+            "decision_id": 24,
+            "minute": 600,
+            "kind": "proposal_submitted",
+            "summary": "ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 327 treated people (testing); welcome_messag"
+          }
+        ]
+      }
+    },
+    {
+      "launch": 5,
+      "pid": 18588,
+      "started_wall": "2026-11-07T21:28:36.046+05:30",
+      "started_epoch": 1794067116.0467296,
+      "sim_minute_at_launch": 735,
+      "sim_label_at_launch": "D0 12:15",
+      "db_at_launch": {
+        "db_exists": true,
+        "chunks": 16,
+        "events_ingested": 193305,
+        "calls": 143757,
+        "decisions": 29,
+        "max_decision_id": 29,
+        "proposals_by_state": {
+          "APPLIED": 2,
+          "PENDING": 3
+        }
+      },
+      "ended_wall": "2026-11-07T21:28:38.278+05:30",
+      "ended_epoch": 1794067118.2469258,
+      "exit_code": 1,
+      "outcome": "hard-killed",
+      "kill": {
+        "label": "d",
+        "attempt": 3,
+        "aim": "approval APPROVED/APPLYING (approved, not yet applied)",
+        "trigger": "targeted",
+        "reason": "approval apr_00003 (ol-ks_cancel-660-5) is 'approved' at the simulator, our row still PENDING (not yet applied)",
+        "landed_on_target_state": false,
+        "elapsed_since_launch_s": 2.2,
+        "startup_done_before_kill": true,
+        "sim_minute_last_polled": 735,
+        "sim_label_last_polled": "D0 12:15",
+        "sim_minute_after_kill": 735,
+        "sim_label_after_kill": "D0 12:15",
+        "sim_last_event_id": 193305,
+        "sim_chunks": 16,
+        "sim_credits_remaining": 200.0
+      },
+      "db_after_kill": {
+        "db_exists": true,
+        "chunks": 16,
+        "max_chunk": 15,
+        "events_ingested": 193305,
+        "ingested_until_minute": 735,
+        "calls": 143757,
+        "decisions": 30,
+        "max_decision_id": 30,
+        "proposals_by_state": {
+          "APPLIED": 2,
+          "PENDING": 3
+        },
+        "experiments_by_status": {
+          "designed": 6
+        },
+        "incidents_by_state": {},
+        "credits_ledger_by_state": {},
+        "inbox_undone": 1,
+        "bootstrapped_workflows": 3,
+        "in_flight": {
+          "open_proposals": [
+            {
+              "proposal_id": "ol-nw_renewal-600-3",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00001",
+              "base_version": 2
+            },
+            {
+              "proposal_id": "ol-nw_kyc-660-4",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00002",
+              "base_version": 1
+            },
+            {
+              "proposal_id": "ol-ks_cancel-660-5",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00003",
+              "base_version": 2
+            }
+          ],
+          "credits_ledger_sent": [],
+          "pending_prompt_probes": [],
+          "open_incidents": [],
+          "active_experiments": [
+            {
+              "experiment_id": "exp-0-welcome_message-0",
+              "dim": "welcome_message",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-0-voice-0",
+              "dim": "voice",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-1-welcome_message-0",
+              "dim": "welcome_message",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-1-voice-0",
+              "dim": "voice",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-2-welcome_message-0",
+              "dim": "welcome_message",
+              "status": "designed"
+            },
+            {
+              "experiment_id": "exp-2-voice-0",
+              "dim": "voice",
+              "status": "designed"
+            }
+          ]
+        },
+        "last_decisions": [
+          {
+            "decision_id": 30,
+            "minute": 735,
+            "kind": "controller_restart",
+            "summary": "restarted at D0 12:15; ingested 0 events in 0.0s"
+          },
+          {
+            "decision_id": 29,
+            "minute": 735,
+            "kind": "controller_restart",
+            "summary": "restarted at D0 12:15; ingested 226 events in 0.0s"
+          },
+          {
+            "decision_id": 28,
+            "minute": 660,
+            "kind": "proposal_submitted",
+            "summary": "ol-ks_cancel-660-5 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 387 treated people (testing); welcome_message"
+          },
+          {
+            "decision_id": 27,
+            "minute": 660,
+            "kind": "proposal_submitted",
+            "summary": "ol-nw_kyc-660-4 -> PENDING: call-hour weights for 4 cohorts; caller IDs: D1 90%, D2 5%, D3 5%; welcome_message: designed default=W1 60%,W2 4"
+          },
+          {
+            "decision_id": 26,
+            "minute": 600,
+            "kind": "hold",
+            "summary": "['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] waiting: worst-case decision D1 10:00 would be after expiry"
+          },
+          {
+            "decision_id": 25,
             "minute": 600,
             "kind": "controller_restart",
             "summary": "restarted at D0 10:00; ingested 0 events in 0.0s"
@@ -705,9 +705,9 @@
     },
     {
       "launch": 6,
-      "pid": 6704,
-      "started_wall": "2026-11-07T19:37:04.885+05:30",
-      "started_epoch": 1794060424.8855674,
+      "pid": 9768,
+      "started_wall": "2026-11-07T21:28:38.303+05:30",
+      "started_epoch": 1794067118.303745,
       "sim_minute_at_launch": 735,
       "sim_label_at_launch": "D0 12:15",
       "db_at_launch": {
@@ -715,15 +715,15 @@
         "chunks": 16,
         "events_ingested": 193305,
         "calls": 143757,
-        "decisions": 28,
-        "max_decision_id": 28,
+        "decisions": 30,
+        "max_decision_id": 30,
         "proposals_by_state": {
           "APPLIED": 2,
           "PENDING": 3
         }
       },
-      "ended_wall": "2026-11-07T19:37:11.266+05:30",
-      "ended_epoch": 1794060431.232117,
+      "ended_wall": "2026-11-07T21:28:46.210+05:30",
+      "ended_epoch": 1794067126.1628447,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -733,13 +733,13 @@
         "trigger": "targeted",
         "reason": "mid-day while dialling (D1 11:00)",
         "landed_on_target_state": null,
-        "elapsed_since_launch_s": 6.347,
+        "elapsed_since_launch_s": 7.859,
         "startup_done_before_kill": true,
         "sim_minute_last_polled": 2100,
         "sim_label_last_polled": "D1 11:00",
         "sim_minute_after_kill": 2100,
         "sim_label_after_kill": "D1 11:00",
-        "sim_last_event_id": 205890,
+        "sim_last_event_id": 205892,
         "sim_chunks": 60,
         "sim_credits_remaining": 200.0
       },
@@ -747,13 +747,13 @@
         "db_exists": true,
         "chunks": 59,
         "max_chunk": 58,
-        "events_ingested": 205665,
+        "events_ingested": 205667,
         "ingested_until_minute": 2085,
         "calls": 152807,
-        "decisions": 57,
-        "max_decision_id": 57,
+        "decisions": 69,
+        "max_decision_id": 69,
         "proposals_by_state": {
-          "APPLIED": 7,
+          "APPLIED": 9,
           "REJECTED": 1
         },
         "experiments_by_status": {
@@ -804,65 +804,65 @@
         },
         "last_decisions": [
           {
-            "decision_id": 57,
+            "decision_id": 69,
             "minute": 2040,
             "kind": "hold",
             "summary": "['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] waiting: worst-case decision D2 10:00 would be after expiry"
           },
           {
-            "decision_id": 56,
+            "decision_id": 68,
             "minute": 2040,
             "kind": "experiment_look",
-            "summary": "voice: look t=0.142 \u2014 continue"
+            "summary": "voice: look t=0.126 \u2014 continue"
           },
           {
-            "decision_id": 55,
+            "decision_id": 67,
             "minute": 2040,
             "kind": "experiment_look",
-            "summary": "welcome_message: look t=0.152 \u2014 continue"
+            "summary": "welcome_message: look t=0.151 \u2014 continue"
           },
           {
-            "decision_id": 54,
-            "minute": 1140,
+            "decision_id": 66,
+            "minute": 1980,
             "kind": "config_changed",
-            "summary": "v5 by controller_auto: caller_id"
+            "summary": "v6 by controller_auto: schedule"
           },
           {
-            "decision_id": 53,
-            "minute": 1140,
+            "decision_id": 65,
+            "minute": 1980,
             "kind": "config_changed",
-            "summary": "v4 by controller_auto: caller_id"
+            "summary": "v5 by controller_auto: schedule"
           },
           {
-            "decision_id": 52,
-            "minute": 1140,
+            "decision_id": 64,
+            "minute": 1980,
             "kind": "auto_apply",
-            "summary": "auto-apply ['caller_id'] -> APPLIED"
+            "summary": "auto-apply ['schedule'] -> APPLIED"
           }
         ]
       }
     },
     {
       "launch": 7,
-      "pid": 1920,
-      "started_wall": "2026-11-07T19:37:11.308+05:30",
-      "started_epoch": 1794060431.308077,
+      "pid": 5152,
+      "started_wall": "2026-11-07T21:28:46.253+05:30",
+      "started_epoch": 1794067126.2530577,
       "sim_minute_at_launch": 2100,
       "sim_label_at_launch": "D1 11:00",
       "db_at_launch": {
         "db_exists": true,
         "chunks": 59,
-        "events_ingested": 205665,
+        "events_ingested": 205667,
         "calls": 152807,
-        "decisions": 57,
-        "max_decision_id": 57,
+        "decisions": 69,
+        "max_decision_id": 69,
         "proposals_by_state": {
-          "APPLIED": 7,
+          "APPLIED": 9,
           "REJECTED": 1
         }
       },
-      "ended_wall": "2026-11-07T19:37:25.344+05:30",
-      "ended_epoch": 1794060445.3096256,
+      "ended_wall": "2026-11-07T21:29:02.884+05:30",
+      "ended_epoch": 1794067142.843065,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -870,15 +870,15 @@
         "attempt": 1,
         "aim": "around the D3 11:30 supervisor prompt incident (validation in flight)",
         "trigger": "targeted",
-        "reason": "credit-spending call in flight: ledger row 1 'probe supervisor prompt change v8' state=sent",
+        "reason": "credit-spending call in flight: ledger row 1 'probe supervisor prompt change v11' state=sent",
         "landed_on_target_state": true,
-        "elapsed_since_launch_s": 14.002,
+        "elapsed_since_launch_s": 16.59,
         "startup_done_before_kill": true,
         "sim_minute_last_polled": 5025,
         "sim_label_last_polled": "D3 11:45",
         "sim_minute_after_kill": 5025,
         "sim_label_after_kill": "D3 11:45",
-        "sim_last_event_id": 233980,
+        "sim_last_event_id": 233984,
         "sim_chunks": 161,
         "sim_credits_remaining": 197.0
       },
@@ -886,13 +886,13 @@
         "db_exists": true,
         "chunks": 161,
         "max_chunk": 160,
-        "events_ingested": 233980,
+        "events_ingested": 233984,
         "ingested_until_minute": 5025,
         "calls": 174507,
-        "decisions": 99,
-        "max_decision_id": 99,
+        "decisions": 136,
+        "max_decision_id": 136,
         "proposals_by_state": {
-          "APPLIED": 12,
+          "APPLIED": 17,
           "REJECTED": 1
         },
         "experiments_by_status": {
@@ -912,7 +912,7 @@
               "id": 1,
               "minute": 5025,
               "kind": "validation",
-              "purpose": "probe supervisor prompt change v8",
+              "purpose": "probe supervisor prompt change v11",
               "cost": 3.0
             }
           ],
@@ -923,7 +923,7 @@
                 {
                   "minute": 5010,
                   "prompt": "P2",
-                  "version": 8
+                  "version": 11
                 }
               ]
             }
@@ -964,65 +964,65 @@
         },
         "last_decisions": [
           {
-            "decision_id": 99,
+            "decision_id": 136,
             "minute": 5010,
             "kind": "supervisor_edit",
             "summary": "supervisor changed ['prompt_version']; locked for 48h \u2014 we will not propose changes to these dims"
           },
           {
-            "decision_id": 98,
+            "decision_id": 135,
             "minute": 5010,
             "kind": "config_changed",
-            "summary": "v8 by supervisor: prompt_version"
+            "summary": "v11 by supervisor: prompt_version"
           },
           {
-            "decision_id": 97,
-            "minute": 4995,
-            "kind": "config_changed",
-            "summary": "v6 by controller_approved: voice"
+            "decision_id": 134,
+            "minute": 4980,
+            "kind": "experiment_look",
+            "summary": "voice: look t=0.607 \u2014 continue"
           },
           {
-            "decision_id": 96,
-            "minute": 4995,
-            "kind": "proposal_applied",
-            "summary": "ol-nw_renewal-4920-13: applied"
+            "decision_id": 133,
+            "minute": 4980,
+            "kind": "experiment_look",
+            "summary": "welcome_message: look t=0.678 \u2014 continue"
           },
           {
-            "decision_id": 95,
-            "minute": 4995,
-            "kind": "proposal_approved",
-            "summary": "ol-nw_renewal-4920-13: approved by client approver"
+            "decision_id": 132,
+            "minute": 4920,
+            "kind": "experiment_look",
+            "summary": "voice: look t=0.134 \u2014 continue"
           },
           {
-            "decision_id": 94,
-            "minute": 4971,
-            "kind": "approval_decided",
-            "summary": "apr_00006 approved"
+            "decision_id": 131,
+            "minute": 4920,
+            "kind": "experiment_look",
+            "summary": "welcome_message: look t=0.119 \u2014 continue"
           }
         ]
       }
     },
     {
       "launch": 8,
-      "pid": 8680,
-      "started_wall": "2026-11-07T19:37:25.388+05:30",
-      "started_epoch": 1794060445.3883333,
+      "pid": 21184,
+      "started_wall": "2026-11-07T21:29:02.917+05:30",
+      "started_epoch": 1794067142.9179747,
       "sim_minute_at_launch": 5025,
       "sim_label_at_launch": "D3 11:45",
       "db_at_launch": {
         "db_exists": true,
         "chunks": 161,
-        "events_ingested": 233980,
+        "events_ingested": 233984,
         "calls": 174507,
-        "decisions": 99,
-        "max_decision_id": 99,
+        "decisions": 136,
+        "max_decision_id": 136,
         "proposals_by_state": {
-          "APPLIED": 12,
+          "APPLIED": 17,
           "REJECTED": 1
         }
       },
-      "ended_wall": "2026-11-07T19:37:42.444+05:30",
-      "ended_epoch": 1794060462.3940115,
+      "ended_wall": "2026-11-07T21:29:22.142+05:30",
+      "ended_epoch": 1794067162.1002836,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -1032,13 +1032,13 @@
         "trigger": "targeted",
         "reason": "around the D5 15:00 supervisor edit (D5 15:00)",
         "landed_on_target_state": null,
-        "elapsed_since_launch_s": 17.006,
+        "elapsed_since_launch_s": 19.182,
         "startup_done_before_kill": true,
         "sim_minute_last_polled": 8100,
         "sim_label_last_polled": "D5 15:00",
         "sim_minute_after_kill": 8100,
         "sim_label_after_kill": "D5 15:00",
-        "sim_last_event_id": 264315,
+        "sim_last_event_id": 264325,
         "sim_chunks": 272,
         "sim_credits_remaining": 191.0
       },
@@ -1046,18 +1046,19 @@
         "db_exists": true,
         "chunks": 271,
         "max_chunk": 270,
-        "events_ingested": 264090,
+        "events_ingested": 264100,
         "ingested_until_minute": 8085,
         "calls": 198007,
-        "decisions": 132,
-        "max_decision_id": 132,
+        "decisions": 212,
+        "max_decision_id": 212,
         "proposals_by_state": {
-          "APPLIED": 14,
+          "APPLIED": 24,
+          "PENDING": 1,
           "REJECTED": 1
         },
         "experiments_by_status": {
-          "promoted": 1,
-          "running": 5
+          "rolled_back": 1,
+          "running": 6
         },
         "incidents_by_state": {
           "closed": 1
@@ -1069,24 +1070,28 @@
         "inbox_undone": 0,
         "bootstrapped_workflows": 3,
         "in_flight": {
-          "open_proposals": [],
+          "open_proposals": [
+            {
+              "proposal_id": "ol-nw_kyc-7860-25",
+              "state": "PENDING",
+              "route": "approval",
+              "kind": "routine",
+              "approval_id": "apr_00008",
+              "base_version": 2
+            }
+          ],
           "credits_ledger_sent": [
             {
               "id": 1,
               "minute": 5025,
               "kind": "validation",
-              "purpose": "probe supervisor prompt change v8",
+              "purpose": "probe supervisor prompt change v11",
               "cost": 3.0
             }
           ],
           "pending_prompt_probes": [],
           "open_incidents": [],
           "active_experiments": [
-            {
-              "experiment_id": "exp-0-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "promoted"
-            },
             {
               "experiment_id": "exp-0-voice-0",
               "dim": "voice",
@@ -1111,70 +1116,76 @@
               "experiment_id": "exp-2-voice-0",
               "dim": "voice",
               "status": "running"
+            },
+            {
+              "experiment_id": "exp-0-welcome_message-7920",
+              "dim": "welcome_message",
+              "status": "running"
             }
           ]
         },
         "last_decisions": [
           {
-            "decision_id": 132,
-            "minute": 7920,
-            "kind": "alert",
-            "summary": "KPI drift: ['engagement_drop']"
+            "decision_id": 212,
+            "minute": 7980,
+            "kind": "experiment_started",
+            "summary": "welcome_message experiment started (v12)"
           },
           {
-            "decision_id": 131,
-            "minute": 7860,
-            "kind": "experiment_extended",
-            "summary": "voice: horizon reached without significance but the best challenger trends positive \u2014 extending once to 10 days"
-          },
-          {
-            "decision_id": 130,
-            "minute": 7860,
-            "kind": "experiment_extended",
-            "summary": "welcome_message: horizon reached without significance but the best challenger trends positive \u2014 extending once to 10 days"
-          },
-          {
-            "decision_id": 129,
-            "minute": 7860,
-            "kind": "hold",
-            "summary": "['caller_id'] waiting: fatigue: 1/2 used, last slot reserved for incidents"
-          },
-          {
-            "decision_id": 128,
-            "minute": 7815,
+            "decision_id": 211,
+            "minute": 7980,
             "kind": "config_changed",
-            "summary": "v3 by controller_approved: caller_id"
+            "summary": "v12 by controller_approved: welcome_message"
           },
           {
-            "decision_id": 127,
-            "minute": 7815,
+            "decision_id": 210,
+            "minute": 7980,
             "kind": "proposal_applied",
-            "summary": "ol-nw_kyc-6660-15: applied"
+            "summary": "ol-nw_renewal-7920-26: applied"
+          },
+          {
+            "decision_id": 209,
+            "minute": 7980,
+            "kind": "proposal_approved",
+            "summary": "ol-nw_renewal-7920-26: approved by client approver"
+          },
+          {
+            "decision_id": 208,
+            "minute": 7965,
+            "kind": "approval_decided",
+            "summary": "apr_00009 approved"
+          },
+          {
+            "decision_id": 207,
+            "minute": 7920,
+            "kind": "cohort_check",
+            "summary": "cohort agreement: 0 of 4800 calls assigned differently"
           }
         ]
       }
     },
     {
       "launch": 9,
-      "pid": 15820,
-      "started_wall": "2026-11-07T19:37:42.482+05:30",
-      "started_epoch": 1794060462.482288,
+      "pid": 6648,
+      "started_wall": "2026-11-07T21:29:22.170+05:30",
+      "started_epoch": 1794067162.1707916,
       "sim_minute_at_launch": 8100,
       "sim_label_at_launch": "D5 15:00",
       "db_at_launch": {
         "db_exists": true,
         "chunks": 271,
-        "events_ingested": 264090,
+        "events_ingested": 264100,
         "calls": 198007,
-        "decisions": 132,
-        "max_decision_id": 132,
+        "decisions": 212,
+        "max_decision_id": 212,
         "proposals_by_state": {
-          "APPLIED": 14,
+          "APPLIED": 24,
+          "PENDING": 1,
           "REJECTED": 1
         }
       },
-      "ended_wall": "2026-11-07T19:37:50.782+05:30",
-      "ended_epoch": 1794060470.7273602,
+      "ended_wall": "2026-11-07T21:29:28.267+05:30",
+      "ended_epoch": 1794067168.2172537,
       "exit_code": 1,
       "outcome": "hard-killed",
       "kill": {
@@ -1182,43 +1193,42 @@
         "attempt": 1,
         "aim": "uncertain governance write in flight (SUBMITTING/APPLYING/AUTO_APPLYING)",
         "trigger": "targeted",
-        "reason": "write in flight: ol-nw_renewal-9240-17 SUBMITTING",
+        "reason": "write in flight: ol-nw_renewal-9180-27 AUTO_APPLYING",
         "landed_on_target_state": true,
-        "elapsed_since_launch_s": 8.245,
+        "elapsed_since_launch_s": 6.046,
         "startup_done_before_kill": true,
-        "sim_minute_last_polled": 9240,
-        "sim_label_last_polled": "D6 10:00",
-        "sim_minute_after_kill": 9240,
-        "sim_label_after_kill": "D6 10:00",
-        "sim_last_event_id": 273519,
-        "sim_chunks": 301,
-        "sim_credits_remaining": 191.0
+        "sim_minute_last_polled": 9180,
+        "sim_label_last_polled": "D6 09:00",
+        "sim_minute_after_kill": 9180,
+        "sim_label_after_kill": "D6 09:00",
+        "sim_last_event_id": 272832,
+        "sim_chunks": 297,
+        "sim_credits_remaining": 188.0
       },
       "db_after_kill": {
         "db_exists": true,
-        "chunks": 301,
-        "max_chunk": 300,
-        "events_ingested": 273519,
-        "ingested_until_minute": 9240,
-        "calls": 204132,
-        "decisions": 140,
-        "max_decision_id": 140,
+        "chunks": 297,
+        "max_chunk": 296,
+        "events_ingested": 272831,
+        "ingested_until_minute": 9135,
+        "calls": 203432,
+        "decisions": 226,
+        "max_decision_id": 226,
         "proposals_by_state": {
-          "APPLIED": 14,
-          "PENDING": 1,
-          "REJECTED": 1,
-          "SUBMITTING": 1
+          "APPLIED": 25,
+          "AUTO_APPLYING": 1,
+          "REJECTED": 1
         },
         "experiments_by_status": {
           "aborted": 1,
-          "rolling_back": 1,
-          "running": 4
+          "rolled_back": 1,
+          "running": 5
         },
         "incidents_by_state": {
-          "closed": 1
+          "closed": 2
         },
         "credits_ledger_by_state": {
-          "done": 2,
+          "done": 3,
           "sent": 1
         },
         "inbox_undone": 0,
@@ -1226,20 +1236,12 @@
         "in_flight": {
           "open_proposals": [
             {
-              "proposal_id": "ol-nw_kyc-8100-16",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00009",
-              "base_version": 3
-            },
-            {
-              "proposal_id": "ol-nw_renewal-9240-17",
-              "state": "SUBMITTING",
-              "route": "approval",
-              "kind": "urgent",
+              "proposal_id": "ol-nw_renewal-9180-27",
+              "state": "AUTO_APPLYING",
+              "route": "auto",
+              "kind": "operational",
               "approval_id": null,
-              "base_version": 7
+              "base_version": 13
             }
           ],
           "credits_ledger_sent": [
@@ -1247,18 +1249,13 @@
               "id": 1,
               "minute": 5025,
               "kind": "validation",
-              "purpose": "probe supervisor prompt change v8",
+              "purpose": "probe supervisor prompt change v11",
               "cost": 3.0
             }
           ],
           "pending_prompt_probes": [],
           "open_incidents": [],
           "active_experiments": [
-            {
-              "experiment_id": "exp-0-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "rolling_back"
-            },
             {
               "experiment_id": "exp-1-welcome_message-0",
               "dim": "welcome_message",
@@ -1278,121 +1275,115 @@
               "experiment_id": "exp-2-voice-0",
               "dim": "voice",
               "status": "running"
+            },
+            {
+              "experiment_id": "exp-0-welcome_message-7920",
+              "dim": "welcome_message",
+              "status": "running"
             }
           ]
         },
         "last_decisions": [
           {
-            "decision_id": 140,
-            "minute": 8400,
-            "kind": "experiment_drop_arm",
-            "summary": "welcome_message: dropping ['W2'] (significantly worse)"
+            "decision_id": 226,
+            "minute": 9180,
+            "kind": "post_apply_verification",
+            "summary": "ol-nw_renewal-7740-23 (v11): pickup 0.292\u21920.285, engagement 0.543\u21920.523; guardrail ok"
           },
           {
-            "decision_id": 139,
-            "minute": 8400,
-            "kind": "hold",
-            "summary": "['welcome_message'] waiting: outside approver hours [10,19)"
+            "decision_id": 225,
+            "minute": 9180,
+            "kind": "person_time_refresh",
+            "summary": "per-person call time (expanded): 535 treated people with a preferred hour"
           },
           {
-            "decision_id": 138,
-            "minute": 8400,
-            "kind": "decay_detected",
-            "summary": "welcome_message: winner stopped winning in ['default'] \u2014 rolling back to incumbent"
+            "decision_id": 224,
+            "minute": 9180,
+            "kind": "person_time_look",
+            "summary": "per-person call time: continue (pickup 0.337 treated vs 0.314 control, z 1.66)"
           },
           {
-            "decision_id": 137,
-            "minute": 8100,
-            "kind": "experiment_aborted",
-            "summary": "voice experiment aborted (v7)"
-          },
-          {
-            "decision_id": 136,
-            "minute": 8100,
-            "kind": "supervisor_edit",
-            "summary": "supervisor changed ['voice']; locked for 48h \u2014 we will not propose changes to these dims"
-          },
-          {
-            "decision_id": 135,
-            "minute": 8100,
+            "decision_id": 223,
+            "minute": 8160,
             "kind": "config_changed",
-            "summary": "v7 by supervisor: voice"
+            "summary": "v3 by controller_approved: voice"
+          },
+          {
+            "decision_id": 222,
+            "minute": 8160,
+            "kind": "incident_not_confirmed",
+            "summary": "inc-nw_renewal-8160: QA flag spike not confirmed \u2014 P1 passes validation 0.990 >= 0.97; no prompt change, watching for 24h"
+          },
+          {
+            "decision_id": 221,
+            "minute": 8160,
+            "kind": "validation_run",
+            "summary": "validated P1: pass_rate 0.990 (n=300, 3 credits) \u2014 confirm inc-nw_renewal-8160"
           }
         ]
       }
     },
     {
       "launch": 10,
-      "pid": 11124,
-      "started_wall": "2026-11-07T19:37:50.839+05:30",
-      "started_epoch": 1794060470.8396137,
-      "sim_minute_at_launch": 9240,
-      "sim_label_at_launch": "D6 10:00",
+      "pid": 18568,
+      "started_wall": "2026-11-07T21:29:28.321+05:30",
+      "started_epoch": 1794067168.3211265,
+      "sim_minute_at_launch": 9180,
+      "sim_label_at_launch": "D6 09:00",
       "db_at_launch": {
         "db_exists": true,
-        "chunks": 301,
-        "events_ingested": 273519,
-        "calls": 204132,
-        "decisions": 140,
-        "max_decision_id": 140,
+        "chunks": 297,
+        "events_ingested": 272831,
+        "calls": 203432,
+        "decisions": 226,
+        "max_decision_id": 226,
         "proposals_by_state": {
-          "APPLIED": 14,
-          "PENDING": 1,
-          "REJECTED": 1,
-          "SUBMITTING": 1
+          "APPLIED": 25,
+          "AUTO_APPLYING": 1,
+          "REJECTED": 1
         }
       },
-      "ended_wall": "2026-11-07T19:38:23.330+05:30",
-      "ended_epoch": 1794060503.3305264,
+      "ended_wall": "2026-11-07T21:29:56.382+05:30",
+      "ended_epoch": 1794067196.3822443,
       "exit_code": 0,
       "outcome": "ran to completion",
       "db_at_end": {
         "db_exists": true,
         "chunks": 492,
         "max_chunk": 491,
-        "events_ingested": 324338,
+        "events_ingested": 324354,
         "ingested_until_minute": 14220,
         "calls": 245032,
-        "decisions": 196,
-        "max_decision_id": 196,
+        "decisions": 324,
+        "max_decision_id": 324,
         "proposals_by_state": {
-          "APPLIED": 18,
-          "PENDING": 1,
-          "REJECTED": 3
+          "APPLIED": 33,
+          "REJECTED": 1,
+          "STALE": 2
         },
         "experiments_by_status": {
           "aborted": 1,
-          "concluding": 2,
-          "no_winner": 1,
+          "no_winner": 4,
           "rolled_back": 1,
-          "running": 3
+          "running": 2
         },
         "incidents_by_state": {
-          "closed": 1
+          "closed": 2
         },
         "credits_ledger_by_state": {
-          "done": 2,
+          "done": 3,
           "sent": 1
         },
         "inbox_undone": 0,
         "bootstrapped_workflows": 3,
         "in_flight": {
-          "open_proposals": [
-            {
-              "proposal_id": "ol-nw_kyc-13620-21",
-              "state": "PENDING",
-              "route": "approval",
-              "kind": "routine",
-              "approval_id": "apr_00014",
-              "base_version": 4
-            }
-          ],
+          "open_proposals": [],
           "credits_ledger_sent": [
             {
               "id": 1,
               "minute": 5025,
               "kind": "validation",
-              "purpose": "probe supervisor prompt change v8",
+              "purpose": "probe supervisor prompt change v11",
               "cost": 3.0
             }
           ],
@@ -1400,23 +1391,8 @@
           "open_incidents": [],
           "active_experiments": [
             {
-              "experiment_id": "exp-1-voice-0",
-              "dim": "voice",
-              "status": "concluding"
-            },
-            {
-              "experiment_id": "exp-2-welcome_message-0",
-              "dim": "welcome_message",
-              "status": "concluding"
-            },
-            {
               "experiment_id": "exp-2-voice-0",
               "dim": "voice",
-              "status": "running"
-            },
-            {
-              "experiment_id": "exp-0-welcome_message-10800",
-              "dim": "welcome_message",
               "status": "running"
             },
             {
@@ -1428,40 +1404,40 @@
         },
         "last_decisions": [
           {
-            "decision_id": 196,
+            "decision_id": 324,
             "minute": 14400,
             "kind": "controller_finish",
             "summary": "scenario finished at D10 00:00"
           },
           {
-            "decision_id": 195,
-            "minute": 14100,
-            "kind": "hold",
-            "summary": "['welcome_message'] waiting: outside approver hours [11,19)"
-          },
-          {
-            "decision_id": 194,
-            "minute": 13980,
-            "kind": "hold",
-            "summary": "['welcome_message'] waiting: worst-case decision D10 10:00 would be after expiry"
-          },
-          {
-            "decision_id": 193,
+            "decision_id": 323,
             "minute": 13800,
-            "kind": "hold",
-            "summary": "['welcome_message'] waiting: fatigue: 1/2 used, last slot reserved for incidents"
+            "kind": "post_apply_verification",
+            "summary": "ol-nw_renewal-12120-34 (v18): pickup 0.302\u21920.300, engagement 0.547\u21920.571; guardrail ok"
           },
           {
-            "decision_id": 192,
-            "minute": 13755,
-            "kind": "proposal_rejected",
-            "summary": "ol-ks_cancel-13620-22: rejected"
+            "decision_id": 322,
+            "minute": 13695,
+            "kind": "experiment_closed",
+            "summary": "welcome_message experiment closed (v15)"
           },
           {
-            "decision_id": 191,
-            "minute": 13726,
-            "kind": "approval_decided",
-            "summary": "apr_00015 rejected"
+            "decision_id": 321,
+            "minute": 13695,
+            "kind": "config_changed",
+            "summary": "v15 by controller_approved: welcome_message"
+          },
+          {
+            "decision_id": 320,
+            "minute": 13695,
+            "kind": "proposal_applied",
+            "summary": "ol-ks_cancel-13620-36: applied"
+          },
+          {
+            "decision_id": 319,
+            "minute": 13695,
+            "kind": "proposal_approved",
+            "summary": "ol-ks_cancel-13620-36: approved by client approver"
           }
         ]
       }
@@ -1474,11 +1450,11 @@
     "end_minute": 14400,
     "finished": true,
     "tick_minutes": 15,
-    "credits_remaining": 191.0,
+    "credits_remaining": 188.0,
     "chunks": 492,
-    "last_event_id": 324338
+    "last_event_id": 324354
   },
-  "finished": "2026-11-07T19:38:23.356+05:30",
+  "finished": "2026-11-07T21:29:56.410+05:30",
   "verification": {
     "result": "PASS",
     "checks": [
@@ -1486,27 +1462,27 @@
         "check": "config history: each proposal_id/approval_id applied at most once",
         "status": "PASS",
         "detail": "no duplicates",
-        "controller_versions": 18
+        "controller_versions": 33
       },
       {
         "check": "every 'applied' approval applied exactly once (config history + sim_log)",
         "status": "PASS",
-        "detail": "11 applied approvals, each exactly one config version; sim_log approval_applied=11, auto_applied=7",
-        "applied_approvals": 11,
-        "sim_log_approval_applied": 11,
-        "sim_log_auto_applied": 7
+        "detail": "12 applied approvals, each exactly one config version; sim_log approval_applied=12, auto_applied=21",
+        "applied_approvals": 12,
+        "sim_log_approval_applied": 12,
+        "sim_log_auto_applied": 21
       },
       {
         "check": "our APPLIED proposals == controller config versions (1:1, same version)",
         "status": "PASS",
-        "detail": "18 APPLIED rows vs 18 controller versions",
-        "our_applied": 18,
-        "controller_versions": 18
+        "detail": "33 APPLIED rows vs 33 controller versions",
+        "our_applied": 33,
+        "controller_versions": 33
       },
       {
         "check": "every simulator approval is in our store with a consistent state",
         "status": "PASS",
-        "detail": "15 approvals {'applied': 11, 'rejected': 3, 'pending': 1}; lost=[]; inconsistent=[]",
+        "detail": "15 approvals {'applied': 12, 'rejected': 1, 'approved': 2}; lost=[]; inconsistent=[]",
         "approvals": 15
       },
       {
@@ -1523,11 +1499,11 @@
         "check": "proposals by state (ours)",
         "status": "INFO",
         "detail": {
-          "APPLIED": 18,
-          "REJECTED": 3,
-          "PENDING": 1
+          "APPLIED": 33,
+          "REJECTED": 1,
+          "STALE": 2
         },
-        "pending_at_end": 1
+        "pending_at_end": 0
       },
       {
         "check": "chunks: each chunk number exactly once, all simulator chunks ingested, per-chunk event counts match",
@@ -1539,27 +1515,27 @@
       {
         "check": "SUM(chunks.events) == simulator last_event_id",
         "status": "PASS",
-        "detail": "324338 vs 324338",
-        "our_events": 324338,
-        "sim_last_event_id": 324338
+        "detail": "324354 vs 324354",
+        "our_events": 324354,
+        "sim_last_event_id": 324354
       },
       {
         "check": "calls table rows == call events in the simulator's event files (no loss, no duplicates)",
         "status": "PASS",
-        "detail": "calls rows 245032 (distinct event_id 245032) vs call events 245032 in 324338 event lines",
+        "detail": "calls rows 245032 (distinct event_id 245032) vs call events 245032 in 324354 event lines",
         "calls_rows": 245032,
         "call_events": 245032
       },
       {
         "check": "decisions: ids strictly increasing, wall clock monotone in id order, append-only triggers present",
         "status": "PASS",
-        "detail": "196 decisions, ids 1..196, wall regressions=0",
-        "decisions": 196
+        "detail": "324 decisions, ids 1..324, wall regressions=0",
+        "decisions": 324
       },
       {
         "check": "one controller_start/controller_restart decision per launch; uncertain writes reconciled after restart",
         "status": "PASS",
-        "detail": "[{'launch': 1, 'expected': '(killed during start-up)', 'got': [], 'recovery_reconcile': []}, {'launch': 2, 'expected': 'controller_start', 'got': ['controller_start'], 'recovery_reconcile': []}, {'launch': 3, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 4, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 5, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 6, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 7, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 8, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 9, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 10, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': ['reconciled ol-nw_renewal-9240-17: SUBMITTING -> PENDING']}]",
+        "detail": "[{'launch': 1, 'expected': '(killed during start-up)', 'got': [], 'recovery_reconcile': []}, {'launch': 2, 'expected': 'controller_start', 'got': ['controller_start'], 'recovery_reconcile': []}, {'launch': 3, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 4, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 5, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 6, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 7, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 8, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 9, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': []}, {'launch': 10, 'expected': 'controller_restart', 'got': ['controller_restart'], 'recovery_reconcile': ['reconciled ol-nw_renewal-9180-27: AUTO_APPLYING -> APPLIED']}]",
         "restarts": 8,
         "starts": 1,
         "recovery_reconcile": 1
@@ -1583,19 +1559,19 @@
       {
         "check": "learning kept: experiments active at a kill continue under the same id after restart",
         "status": "PASS",
-        "detail": "6 experiments were active at some kill, all still present; 6 experiments have decisions in more than one controller launch: {'exp-0-welcome_message-0': [2, 6, 7, 9, 10], 'exp-0-voice-0': [2, 6, 7, 8, 9], 'exp-1-welcome_message-0': [2, 7, 8, 9, 10], 'exp-1-voice-0': [2, 7, 8, 10], 'exp-2-welcome_message-0': [2, 6, 7, 8, 10], 'exp-2-voice-0': [2, 6, 7, 8, 10]}",
-        "experiments_spanning_launches": 6
+        "detail": "7 experiments were active at some kill, all still present; 7 experiments have decisions in more than one controller launch: {'exp-0-welcome_message-0': [2, 6, 7, 8], 'exp-0-voice-0': [2, 6, 7, 8, 9], 'exp-1-welcome_message-0': [2, 7, 8, 10], 'exp-1-voice-0': [2, 7, 8, 10], 'exp-2-welcome_message-0': [2, 6, 7, 8, 10], 'exp-2-voice-0': [2, 6, 7, 8, 10], 'exp-0-welcome_message-7920': [8, 10]}",
+        "experiments_spanning_launches": 7
       },
       {
         "check": "incidents: no duplicates (one incident_opened decision per incident, <=1 open per workflow)",
         "status": "PASS",
-        "detail": "1 incidents [('inc-ks_cancel-5040', 'closed')]; incident_opened decisions=1"
+        "detail": "2 incidents [('inc-ks_cancel-5040', 'closed'), ('inc-nw_renewal-8160', 'closed')]; incident_opened decisions=2"
       },
       {
         "check": "credits: simulator spend accounted for by our ledger (done <= spent <= done + sent-with-unknown-outcome)",
         "status": "PASS",
-        "detail": "simulator credits used 9.0 (start 200.0, remaining 191.0); our ledger cost by state {'done': 6.0, 'sent': 3.0}",
-        "credits_used": 9.0
+        "detail": "simulator credits used 12.0 (start 200.0, remaining 188.0); our ledger cost by state {'done': 9.0, 'sent': 3.0}",
+        "credits_used": 12.0
       },
       {
         "check": "simulator finished and the final controller launch exited 0",
@@ -1611,102 +1587,107 @@
     "decision_kinds": {
       "controller_start": 1,
       "bootstrap": 3,
-      "did_health": 15,
+      "did_health": 17,
       "experiment_designed": 8,
-      "hold": 15,
-      "auto_apply": 7,
-      "config_changed": 20,
-      "proposal_submitted": 14,
+      "hold": 12,
+      "auto_apply": 20,
+      "config_changed": 35,
+      "person_time_refresh": 21,
+      "proposal_submitted": 15,
       "controller_restart": 8,
-      "approval_decided": 14,
-      "proposal_approved": 11,
-      "proposal_applied": 11,
+      "approval_decided": 15,
+      "proposal_approved": 14,
+      "proposal_applied": 12,
       "experiment_started": 8,
-      "proposal_rejected": 3,
-      "experiment_look": 32,
+      "proposal_rejected": 1,
+      "post_apply_verification": 30,
+      "person_time_look": 15,
+      "experiment_look": 30,
+      "cohort_check": 26,
+      "experiment_drop_arm": 2,
       "experiment_winner": 1,
       "experiment_promoted": 1,
-      "experiment_drop_arm": 2,
       "supervisor_edit": 2,
-      "validation_run": 2,
-      "incident_opened": 1,
+      "validation_run": 3,
+      "incident_opened": 2,
       "incident_fix_selected": 1,
       "incident_fix_applied": 1,
       "incident_verified": 1,
-      "experiment_extended": 4,
-      "alert": 1,
-      "experiment_aborted": 1,
       "decay_detected": 1,
-      "recovery_reconcile": 1,
-      "experiment_no_winner": 3,
       "experiment_rolled_back": 1,
-      "experiment_closed": 1,
+      "experiment_extended": 3,
+      "experiment_aborted": 1,
+      "incident_not_confirmed": 1,
+      "recovery_reconcile": 1,
+      "experiment_no_winner": 4,
+      "experiment_closed": 4,
+      "proposal_stale": 2,
       "controller_finish": 1
     },
     "restart_decisions": [
       [
         1,
-        1794060417.0552468,
+        1794067109.3091135,
         "controller_start",
-        "started at D0 00:00; ingested 187274 events in 3.8s"
+        "started at D0 00:00; ingested 187274 events in 5.1s"
       ],
       [
-        23,
-        1794060420.8520038,
+        25,
+        1794067113.2614818,
         "controller_restart",
         "restarted at D0 10:00; ingested 0 events in 0.0s"
       ],
       [
-        27,
-        1794060423.2304578,
+        29,
+        1794067115.9834685,
         "controller_restart",
         "restarted at D0 12:15; ingested 226 events in 0.0s"
       ],
       [
-        28,
-        1794060424.8272367,
+        30,
+        1794067118.243728,
         "controller_restart",
         "restarted at D0 12:15; ingested 0 events in 0.0s"
       ],
       [
-        29,
-        1794060426.6596196,
+        31,
+        1794067120.132349,
         "controller_restart",
         "restarted at D0 12:15; ingested 0 events in 0.0s"
       ],
       [
-        58,
-        1794060432.8392997,
+        70,
+        1794067128.2916615,
         "controller_restart",
-        "restarted at D1 11:00; ingested 225 events in 0.0s"
+        "restarted at D1 11:00; ingested 225 events in 0.1s"
       ],
       [
-        100,
-        1794060447.2758071,
+        137,
+        1794067144.8276649,
         "controller_restart",
         "restarted at D3 11:45; ingested 0 events in 0.0s"
       ],
       [
-        133,
-        1794060464.1697109,
+        213,
+        1794067164.3485014,
         "controller_restart",
         "restarted at D5 15:00; ingested 225 events in 0.0s"
       ],
       [
-        141,
-        1794060472.615298,
+        227,
+        1794067170.2519708,
         "controller_restart",
-        "restarted at D6 10:00; ingested 0 events in 0.0s"
+        "restarted at D6 09:00; ingested 0 events in 0.0s"
       ]
     ],
     "recovery_reconcile_decisions": [
       [
-        142,
-        1794060472.6375008,
-        "ol-nw_renewal-9240-17",
-        "reconciled ol-nw_renewal-9240-17: SUBMITTING -> PENDING"
+        228,
+        1794067170.2647803,
+        "ol-nw_renewal-9180-27",
+        "reconciled ol-nw_renewal-9180-27: AUTO_APPLYING -> APPLIED"
       ]
     ],
-    "grade_table": "| workflow | conclusion rate | \u0394 | pickup | \u0394 | engagement | \u0394 | engagement gap captured | hallucinated calls (base) |\n|---|---|---|---|---|---|---|---|---|\n| ks_cancel | 0.384 | +55.2% | 0.258 | +40.1% | 0.509 | +6.8% | 38% | 79 (330) |\n| nw_kyc | 0.431 | +14.9% | 0.275 | +13.6% | 0.592 | +0.0% | -11% | 50 (31) |\n| nw_renewal | 0.478 | +12.0% | 0.290 | +10.8% | 0.550 | +0.4% | 5% | 56 (55) |\n| ALL | 0.425 | +27.3% | 0.272 | +22.6% | 0.540 | +2.0% | 22% | 185 (416) |"
+    "grade_table": "| workflow | conclusion rate | \u0394 | pickup | \u0394 | engagement | \u0394 | engagement gap captured | hallucinated calls (base) |\n|---|---|---|---|---|---|---|---|---|\n| ks_cancel | 0.371 | +50.0% | 0.249 | +35.7% | 0.510 | +7.1% | 37% | 56 (330) |\n| nw_kyc | 0.409 | +9.1% | 0.266 | +10.0% | 0.584 | -1.3% | -20% | 31 (31) |\n| nw_renewal | 0.502 | +17.6% | 0.295 | +12.8% | 0.563 | +2.7% | 24% | 75 (55) |\n| ALL | 0.423 | +26.5% | 0.269 | +21.0% | 0.544 | +2.7% | 27% | 162 (416) |"
   }
 }
