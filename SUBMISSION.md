@@ -762,7 +762,7 @@ re-read whole (`reports/memory.md`).
   once (event counts equal to the simulator's), calls table equal to the simulator's call events, no proposal or
   approval applied twice, every simulator approval known to our store, nothing left in an uncertain state,
   experiments and incidents not duplicated and continuing under the same ids, credits accounted for, run finished.
-  Outcomes under kills: conclusion rate +25.1% vs baseline with 9 kills vs +26.4% uninterrupted, both on the final decision logic (commit `9c023e9`).
+  Outcomes under kills: conclusion rate +25.0% vs baseline with 9 kills vs +25.7% uninterrupted, both on the final decision logic (commit `1c12251`).
 * **The test found three real defects**, all fixed: a paid validation result could be lost between the ledger
   and the incident (now one transaction); a supervisor-prompt probe was cleared before the validation call, so a
   crash forgot a pending safety check (now cleared in the same transaction as the result); and a caller-ID
@@ -784,7 +784,7 @@ re-read whole (`reports/memory.md`).
   `recovery_reconcile` decision, all counted toward the approver's budget.
 * **Every applied change is verified 24 h later** (`post_apply_verification`: pickup and engagement before/after,
   guardrail KPI against the policy margin, alert on breach) — the audit trail always has a "what happened next".
-* **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 32 attacks — an apply-boundary crash matrix, HTTP
+* **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 39 attacks — an apply-boundary crash matrix, HTTP
   429/5xx/truncated responses, a second controller process killed with SIGKILL, a corrupted store, null-effect and
   strict-policy scenarios — each with what it found, the fix and the regression test.
 * **Adversarial review.** An independent read-only audit of the code (fresh eyes, prompted to find crash-safety,

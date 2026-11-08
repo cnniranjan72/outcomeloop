@@ -66,7 +66,7 @@ re-read whole (`reports/memory.md`).
   `recovery_reconcile` decision, all counted toward the approver's budget.
 * **Every applied change is verified 24 h later** (`post_apply_verification`: pickup and engagement before/after,
   guardrail KPI against the policy margin, alert on breach) — the audit trail always has a "what happened next".
-* **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 32 attacks — an apply-boundary crash matrix, HTTP
+* **Adversarial testing** (`docs/ADVERSARIAL_TESTING.md`): 39 attacks — an apply-boundary crash matrix, HTTP
   429/5xx/truncated responses, a second controller process killed with SIGKILL, a corrupted store, null-effect and
   strict-policy scenarios — each with what it found, the fix and the regression test.
 * **Adversarial review.** An independent read-only audit of the code (fresh eyes, prompted to find crash-safety,
