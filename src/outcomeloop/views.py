@@ -212,6 +212,13 @@ def decision(db: DB, decision_id: int, evidence_lines: int = 60) -> str:
         out += ["", "Linked:"] + [f"  {x}" for x in links]
     if ev:
         try:
+            evd = json.loads(ev)
+            key = _life_line(kind, summ, evd) if isinstance(evd, dict) else []
+        except ValueError:
+            key = []
+        if key:   # the statistics that decided it, readable; the full evidence follows
+            out += ["", "Key numbers:"] + [f"  {x}" for x in key]
+        try:
             pretty = json.dumps(json.loads(ev), indent=2, default=str).split("\n")
         except ValueError:
             pretty = [ev]
@@ -249,6 +256,15 @@ def _life_line(kind: str, summ: str, ev: dict) -> list[str]:
         for o, a in sorted(arms.items()):
             out.append(f"{o}: {_pct(a.get('lift_rel'))} engagement (z {a.get('z')}, p {a.get('p')}, n {a.get('connected')})"
                        f"; pickup diff {a.get('pickup_diff')} (z {a.get('pickup_z')})")
+        al = ev.get("alpha_look")
+        ps = sorted(((a.get("p"), o) for o, a in arms.items() if a.get("p") is not None))
+        if al and ps:   # Holm step-down at 80 % of this look's alpha (experiments.look), stopping at the first failure
+            steps, ok = [], True
+            for i, (p, o) in enumerate(ps):
+                thr = 0.8 * al / (len(ps) - i)
+                ok = ok and p <= thr
+                steps.append(f"{o} p {p:.3g} {'≤' if p <= thr else '>'} {thr:.3g} {'✓' if ok else '✗'}")
+            out.append("Holm (80% of this look's alpha, step-down): " + "; ".join(steps))
         if kind == "experiment_winner":
             st = (ev.get("stability") or {}).get(ev.get("winner") or "", {})
             it = (ev.get("interaction") or {}).get(ev.get("winner") or "", {})

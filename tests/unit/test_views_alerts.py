@@ -111,4 +111,6 @@ def test_lifecycle_links_experiment_decisions_and_the_proposals_that_carried_it(
     out = views.lifecycle(db, "exp-8-voice-0")
     assert "planned n 900" in out and "V2: +12.0% engagement (z 3.1" in out and "significant after Holm: ['V2']" in out
     assert "live as config v4" in out and "ol-8-1" in out
+    assert "Holm (80% of this look's alpha, step-down): V2 p 0.001 ≤ 0.016 ✓" in out
+    assert "Key numbers:" in views.decision(db, db.q1("SELECT decision_id FROM decisions WHERE kind='experiment_winner'")[0])
     assert views.lifecycle(db, "exp-nope").startswith("no experiment")
