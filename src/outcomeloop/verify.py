@@ -239,6 +239,35 @@ def _recompute_look(db: DB, d: dict, minute: int, eid: str) -> list[str]:
     return out
 
 
+def _recompute_did(db: DB, wf: int, minute: int, summ: str, stored: dict) -> list[str]:
+    """Re-run the caller-ID detector on the persisted rows as of the decision (same inputs: its own-past baseline is
+    computed at the start of each 6 h bucket) and compare the fast and slow windows that decide 'degraded'."""
+    import re
+    from .config import Settings
+    from .detectors import did_health, did_own_past
+    m = re.search(r"caller ID (\S+):", summ)
+    spec = db.q1("SELECT spec FROM workflows WHERE wf=?", (wf,))
+    if not m or not spec:
+        return [f"{NOT_VERIFIABLE}: caller ID or workflow options not retained"]
+    did = m.group(1)
+    opts = (json.loads(spec[0]).get("options") or {}).get("caller_id") or [did]
+    s = Settings()
+    own = did_own_past(db, wf, (minute // 360) * 360, s)
+    now_h = did_health(db, wf, opts, minute, s, None, None, own).get(did, {})
+    out = [f"re-run of the caller-ID detector for {did} at {minute_to_label(minute)} (default settings)"]
+    for w in ("fast", "slow"):
+        a, b = (stored.get("windows") or {}).get(w), (now_h.get("windows") or {}).get(w)
+        if not a or not b:
+            out.append(f"{NOT_VERIFIABLE}: {w} window not in the stored evidence")
+            continue
+        same = all(a.get(k) == b.get(k) for k in ("dials", "connected", "pickup", "z"))
+        out.append(f"{VALID if same else INVALID}: {w} window stored {a.get('dials')} dials, pickup {a.get('pickup')},"
+                   f" z {a.get('z')}; recomputed {b.get('dials')} dials, pickup {b.get('pickup')}, z {b.get('z')}")
+    out.append(f"{VALID if now_h.get('state') == stored.get('state') else INVALID}: state stored {stored.get('state')},"
+               f" recomputed {now_h.get('state')}")
+    return out
+
+
 def replay(db: DB, decision_id: int) -> str:
     r = db.q1("SELECT d.decision_id, d.minute, d.wf, w.workflow_id, d.kind, d.actor, d.summary, d.reasoning, d.evidence,"
               " d.proposal_id, d.approval_id, d.config_version, d.experiment_id, d.incident_id FROM decisions d LEFT JOIN"
@@ -277,6 +306,8 @@ def replay(db: DB, decision_id: int) -> str:
     if kind in ("experiment_look", "experiment_winner", "experiment_no_winner", "experiment_extended",
                 "experiment_drop_arm") and eid:
         checks += _recompute_look(db, evd, m, eid)
+    if kind == "did_health" and wf is not None and evd.get("windows"):
+        checks += _recompute_did(db, wf, m, summ, evd)
     if kind == "validation_run" or (kind in ("incident_opened", "incident_fix_selected") and evd.get("validation")):
         vr = (evd.get("validation") or evd).get("validation_run_id")
         row = db.q1("SELECT response FROM credits_ledger WHERE response LIKE ?", (f'%"{vr}"%',)) if vr else None

@@ -107,3 +107,22 @@ def test_replay_is_read_only(db):
     replay(db, did)
     assert db.q1("SELECT COUNT(*) FROM decisions")[0] == before[0]
     assert db.q1("SELECT total_changes()")[0] == before[1]
+
+
+def test_replay_reruns_the_caller_id_detector_and_matches_or_flags(db):
+    from outcomeloop.config import Settings
+    from outcomeloop.detectors import did_health, did_own_past
+    db.x("INSERT INTO workflows (wf, workflow_id, tenant_id, spec) VALUES (0, 'wfA', 't1', ?)",
+         (json.dumps({"options": {"caller_id": ["D1", "D2"]}}),))
+    now = 3 * 1440 + 12 * 60
+    add_calls(db, 0, 2000, 600, 300, minute=now - 1440, spread=1440, did="D1")      # pickup 0.30
+    add_calls(db, 0, 2000, 300, 150, minute=now - 1440, spread=1440, did="D2")      # pickup 0.15: degraded
+    s = Settings()
+    h = did_health(db, 0, ["D1", "D2"], now, s, None, None, did_own_past(db, 0, (now // 360) * 360, s))["D2"]
+    assert h["state"] == "degraded"
+    db.decide(now, 0, "did_health", "caller ID D2: healthy -> degraded", evidence=h)
+    ok = replay(db, db.q1("SELECT MAX(decision_id) FROM decisions")[0])
+    assert "VALID: slow window" in ok and "VALID: state stored degraded, recomputed degraded" in ok
+    h["windows"]["slow"]["z"] = -9.99                                                    # tampered evidence
+    db.decide(now, 0, "did_health", "caller ID D2: healthy -> degraded", evidence=h)
+    assert "INVALID: slow window" in replay(db, db.q1("SELECT MAX(decision_id) FROM decisions")[0])
