@@ -18,14 +18,14 @@ the simulator.
 | Headline (from `reports/`) | Value |
 |---|---|
 | public_01 conclusion-rate lift vs no-op baseline, all workflows | `+15.3%` (0 harmful changes of 26) |
-| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+25.1%` (2 harmful of 28) |
-| public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `90 min` (detected in 15 min; the rest is approver latency) |
+| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+25.7%` (1 harmful of 29) |
+| public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `135 min` (detected in 15 min; the rest is approver latency) |
 | public_03 ingest throughput (4 vCPU / 8 GB container) | `~47,000` history, `~39,000` live events/s (`reports/scaling.md`) |
 | public_03 controller seconds per simulated day (container, 1×) | `49 s` (SRE target 600 s; ≈ 460 s *projected* at 10×) |
 | public_03 peak controller memory | `361 MB` (was 1,046 MB; `reports/memory.md`) |
-| Tests | `224` (222 unit + 2 slow integration) |
+| Tests | `229` (227 unit + 2 slow integration) |
 | Crash-recovery run (kill / restart / verify) | `9 hard kills, 20 verification checks, 0 failed` |
-| Robustness suite (7 generated scenarios × 2 seeds + 2 public seeds) | `16/16` pass, 0 decision errors, 0 false winners in 15 null experiments |
+| Robustness suite (7 generated scenarios × 2 seeds + 2 public seeds) | `16/16` pass, 0 decision errors, 0 false winners in 12 null experiments |
 
 The full figures are in `reports/public_01_dev.md`, `reports/public_02_incidents.md`, `reports/public_03.md`,
 `reports/crash_recovery_timeline.json` and `reports/crash_public_02_grade.md`. Reasoning, stakeholder replies

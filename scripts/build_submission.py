@@ -199,7 +199,7 @@ def main():
         "{{P01_ALL}}": pct(a1), "{{P02_ALL}}": pct(a2), "{{P02_MTTR}}": str(mttr),
         "{{P01_PRIMARY}}": primary(g1, ["nw_renewal", "nw_kyc", "ks_cancel"]),
         "{{P01_HARM}}": f"{len(h1)} harmful of {n1} applied changes",
-        "{{P02_HARM}}": f"{len(h2)} harmful of {n2} applied (both small exploration costs, §11)" if len(h2) == 2 else f"{len(h2)} harmful of {n2} applied",
+        "{{P02_HARM}}": f"{len(h2)} harmful of {n2} applied (both small exploration costs, §11)" if len(h2) == 2 else f"{len(h2)} harmful of {n2} applied (an exploration cost: an experiment launch onto a challenger that was worse in truth, §11)" if len(h2) == 1 else f"{len(h2)} harmful of {n2} applied",
         "{{CRASH_SUMMARY}}": f"9 hard kills on public_02; verification {crash_line}",
         "{{LOAD_SUMMARY}}": f"{eps} events/s ingest, {ctrl_day} of controller time per simulated day for 12 workflows{slow}{cont}, {rss} peak memory",
         "{{LOAD_MACHINE}}": machine, "{{LOAD_TABLE}}": load_table, "{{LOAD_TICK}}": tick, "{{LOAD_CTRL_DAY}}": ctrl_day,

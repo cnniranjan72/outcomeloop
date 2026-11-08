@@ -15,12 +15,12 @@
   factorial welcome × voice experiments with a sequential test that controls the false-winner rate, and routes
   every change through governance with one batched proposal per workflow.
 - **public_01:** conclusion rate +15.3% vs the no-op baseline (primary KPI: nw_renewal +2.8%, nw_kyc +13.0%, ks_cancel +2.3%), 0 harmful of 26 applied changes.
-- **public_02:** conclusion rate +25.1%; spam-flagged caller ID moved off within ~2 h by policy-permitted
+- **public_02:** conclusion rate +25.7%; spam-flagged caller ID moved off within ~2 h by policy-permitted
   auto-apply; supervisor's unsafe prompt reverted through an approval with validation evidence (MTTR
-  90 min); 2 harmful of 28 applied (both small exploration costs, §11).
+  135 min); 1 harmful of 29 applied (an exploration cost: an experiment launch onto a challenger that was worse in truth, §11).
 - Kill -9 at any point and it resumes (9 hard kills on public_02; verification PASS: 20 checks, 0 failed); public_03 load: 21,609 events/s ingest, 73–108 s of controller time per simulated day for 12 workflows (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory.
 - Out of sample: six scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
-  × 2 seeds plus both public scenarios — 16/16 runs finished with run.sh exit 0; conclusion rate +9.7% to +23.6% vs baseline; 0 false winners in 15 experiments on the no-effects scenario (§11).
+  × 2 seeds plus both public scenarios — 16/16 runs finished with run.sh exit 0; conclusion rate +8.1% to +23.8% vs baseline; 0 false winners in 12 experiments on the no-effects scenario (§11).
 - Deliberately not built: LLM-driven anything beyond fix suggestions, fair-share across
   tenants (C15), a UI (the supervisor view is a CLI over the same store).
 
@@ -117,7 +117,7 @@ stub.
 
 - **Accepted.**
   - Show a lift figure per workflow: the primary KPI versus baseline with its confidence interval, and the
-    guardrail beside it. Source: `sim grade` reports and our audit store. (public_01 conclusion rate +15.3%, public_02 +25.1% vs the no-op baseline; per workflow in §11)
+    guardrail beside it. Source: `sim grade` reports and our audit store. (public_01 conclusion rate +15.3%, public_02 +25.7% vs the no-op baseline; per workflow in §11)
   - Fewer, bigger requests: one open proposal per workflow carries the whole batched changeset (proposal state
     machine, §6).
   - Speed where the policy allows it: caller-ID rotation and schedule changes auto-apply on `nw_renewal`
@@ -478,6 +478,14 @@ itself restarts the controller if it exits abnormally.
 * **Test.** One-sided two-proportion z-test on engagement (engaged ÷ connected) of each challenger vs the
   incumbent, using only calls that actually ran with that variant under the experiment's config versions
   (Product: only what happened counts).
+* **Is the test worth running? (value of information).** Before a test, each challenger is screened against the
+  last finished experiment on the same dimension (concurrent, randomised arms, ≤ 14 days old): its 80 % upper bound
+  of lift over the *current* incumbent must reach half the planned MDE — the full MDE when the incumbent is a
+  supervisor's choice (overriding a deliberate human decision needs real promise). Screened challengers are dropped
+  (`experiment_screened`); if none remain, no test (`experiment_skipped`, 3-day cooldown). Found on public_02: the
+  moment a supervisor's 48 h voice lock expired we re-tested V1/V3, which our own aborted test had measured within a
+  few points of the supervisor's V2 — 40 % of traffic for no plausible gain, graded harmful. Unmeasured options are
+  never screened, so this cannot stop exploration of anything new.
 * **Stopping rule.** Daily looks at the approver's start hour. Lan-DeMets **O'Brien-Fleming** spending
   `α(t) = 2 − 2Φ(z_{α/2}/√t)` with information fraction `t = n / n_plan`; each look's nominal level is the
   increment of spent α, and α is tracked as an **explicit budget** on the experiment, so the family-wise
@@ -509,7 +517,7 @@ itself restarts the controller if it exits abnormally.
   allocation count: they are concurrent, randomised comparisons of the same arms.
 * Rollback = proposal back to the holdout option; the decayed option is blacklisted for 7 days.
 * How fast: the share of in-population calls still on the decaying `W3` after its decay onset, by simulated day,
-  from the grader (grader: share by day after onset {"2": 0.85, "3": 0.848, "4": 0.196, "5": 0.0, "6": 0.0, "7": 0.0, "8": 0.0, "9": 0.0}) — typically 2–4 days from onset to 0 %. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
+  from the grader (grader: share by day after onset {"2": 0.857, "3": 0.849, "4": 0.503, "5": 0.0, "6": 0.0, "7": 0.0, "8": 0.0, "9": 0.0}) — typically 2–4 days from onset to 0 %. The limit is power: a 15 % holdout gets ~150 connected calls/day on nw_renewal.
 
 ### Call time and caller ID (C4, C5)
 * **History (C3).** 14 days (7 on load) of calls under the business default give per-cohort hour-of-day pickup
@@ -601,7 +609,7 @@ the next plan starts from fresh data and the new base (Product: expired = reject
   (latency up to 8 h, hours 10–18) that means early in the day.
 * **Fatigue.** Trailing-24h count of every request (rejected and expired count too) < `min(policy, tenant
   preference)`, with **one slot reserved for incidents**. Effect: ≤ 1 routine request/day on `ks_cancel` and
-  `nw_kyc`, ≤ 2 on `nw_renewal`. Peak requests/24h on the public runs: public_01 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}, public_02 {'nw_renewal': 2, 'nw_kyc': 1, 'ks_cancel': 1}.
+  `nw_kyc`, ≤ 2 on `nw_renewal`. Peak requests/24h on the public runs: public_01 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 1}, public_02 {'nw_renewal': 1, 'nw_kyc': 1, 'ks_cancel': 2}.
 * **Apply window.** We poll every 15 simulated minutes, so an approval is applied within one tick (2 h window).
   Lapsed approvals on the public runs: 0 and 0.
 
@@ -897,12 +905,12 @@ listed in §14.
 
 | workflow | conclusion rate | Δ | pickup | Δ | engagement | Δ | engagement gap captured | hallucinated calls (base) |
 |---|---|---|---|---|---|---|---|---|
-| ks_cancel | 0.372 | +50.3% | 0.251 | +36.5% | 0.508 | +6.6% | 37% | 65 (330) |
-| nw_kyc | 0.400 | +6.6% | 0.259 | +6.9% | 0.588 | -0.6% | 2% | 32 (31) |
-| nw_renewal | 0.492 | +15.4% | 0.292 | +11.4% | 0.560 | +2.2% | 24% | 67 (55) |
-| ALL | 0.418 | +25.1% | 0.267 | +20.1% | 0.543 | +2.4% | 29% | 164 (416) |
+| ks_cancel | 0.372 | +50.4% | 0.253 | +37.4% | 0.504 | +5.9% | 43% | 79 (330) |
+| nw_kyc | 0.420 | +12.0% | 0.268 | +10.8% | 0.593 | +0.2% | -2% | 44 (31) |
+| nw_renewal | 0.486 | +13.8% | 0.291 | +11.1% | 0.554 | +1.1% | 24% | 76 (55) |
+| ALL | 0.420 | +25.7% | 0.269 | +21.1% | 0.540 | +1.9% | 32% | 199 (416) |
 
-28 changes applied (beneficial: 10, harmful: 2, neutral: 16); 12 approval requests ({"approved": 11, "rejected": 1, "expired": 0}), 17 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 2, "nw_kyc": 1, "ks_cancel": 1}; credits used 6 (2 validation runs, 0 LLM calls).
+29 changes applied (beneficial: 12, harmful: 1, neutral: 16); 15 approval requests ({"approved": 14, "rejected": 1, "expired": 0}), 17 auto-applied, 0 auto-apply rejected, 0 apply conflicts, 0 lapsed, peak requests/24h {"nw_renewal": 1, "nw_kyc": 1, "ks_cancel": 2}; credits used 6 (2 validation runs, 0 LLM calls).
 
 ### Out of sample: the robustness suite (`reports/robustness.md`)
 
@@ -913,22 +921,22 @@ at two random seeds. The table is the simulator grader's output:
 
 | scenario | run.sh exit | conclusion Δ (per workflow) | pickup Δ | engagement Δ | changes (+/=/-) | governance | credits | winners / experiments | decision errors |
 |---|---|---|---|---|---|---|---|---|---|
-| public_01_dev_s2 | 0 | +13.3% (ks_cancel +14.2%, nw_kyc +16.6%, nw_renewal +10.4%) | +9.3% | +2.9% | 25 (8+/17=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 2/7 | 0 |
-| public_02_incidents_s2 | 0 | +23.6% (ks_cancel +55.1%, nw_kyc +6.2%, nw_renewal +10.0%) | +21.2% | +0.5% | 31 (12+/17=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 6 | 1/9 | 0 |
-| r1_shuffled_truth | 0 | +21.6% (ks_cancel +14.6%, nw_kyc +4.0%, nw_renewal +44.2%) | +16.1% | +3.6% | 28 (10+/15=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 3/7 | 0 |
-| r1_shuffled_truth_s2 | 0 | +23.6% (ks_cancel +18.3%, nw_kyc +12.2%, nw_renewal +38.7%) | +17.4% | +4.0% | 27 (8+/16=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 1/7 | 0 |
+| public_01_dev_s2 | 0 | +12.6% (ks_cancel +11.9%, nw_kyc +14.3%, nw_renewal +12.5%) | +9.3% | +2.0% | 26 (9+/17=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 2/7 | 0 |
+| public_02_incidents_s2 | 0 | +23.8% (ks_cancel +54.3%, nw_kyc +7.2%, nw_renewal +10.4%) | +21.0% | +0.8% | 27 (12+/14=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 6 | 1/6 | 0 |
+| r1_shuffled_truth | 0 | +22.0% (ks_cancel +17.3%, nw_kyc +3.9%, nw_renewal +41.6%) | +17.5% | +2.8% | 26 (8+/16=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 3/6 | 0 |
+| r1_shuffled_truth_s2 | 0 | +23.6% (ks_cancel +18.3%, nw_kyc +12.2%, nw_renewal +38.7%) | +17.4% | +4.0% | 27 (8+/16=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 9 | 1/6 | 0 |
 | r2_strict_policy | 0 | +22.7% (ks_cancel +7.1%, nw_kyc +178.4%, nw_renewal +5.0%) | +19.6% | +0.8% | 12 (9+/1=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 18 | 1/7 | 0 |
-| r2_strict_policy_s2 | 0 | +21.6% (ks_cancel +6.0%, nw_kyc +159.3%, nw_renewal +8.5%) | +18.3% | +1.0% | 11 (7+/2=/2-) | exp 1, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 9 | 1/7 | 0 |
-| r3_null_effects | 0 | +9.7% (ks_cancel +10.2%, nw_kyc +9.4%, nw_renewal +9.3%) | +9.1% | +0.0% | 28 (3+/25=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/8 | 0 |
-| r3_null_effects_s2 | 0 | +11.1% (ks_cancel +11.4%, nw_kyc +10.3%, nw_renewal +11.2%) | +10.1% | -0.0% | 24 (4+/20=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/7 | 0 |
+| r2_strict_policy_s2 | 0 | +21.6% (ks_cancel +6.0%, nw_kyc +159.3%, nw_renewal +8.5%) | +18.3% | +1.0% | 11 (7+/2=/2-) | exp 1, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 9 | 1/6 | 0 |
+| r3_null_effects | 0 | +9.7% (ks_cancel +10.2%, nw_kyc +9.4%, nw_renewal +9.3%) | +9.1% | +0.0% | 26 (3+/23=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/6 | 0 |
+| r3_null_effects_s2 | 0 | +8.1% (ks_cancel +8.3%, nw_kyc +9.4%, nw_renewal +7.3%) | +7.6% | -0.1% | 25 (3+/22=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 0/6 | 0 |
 | r4_decay_heavy | 0 | +10.3% (ks_cancel +11.7%, nw_kyc +5.3%, nw_renewal +11.6%) | +10.1% | -0.4% | 33 (11+/21=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 2/8 | 0 |
-| r4_decay_heavy_s2 | 0 | +11.0% (ks_cancel +13.4%, nw_kyc +8.0%, nw_renewal +10.1%) | +10.1% | +0.4% | 33 (10+/21=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 3/7 | 0 |
-| r5_low_credits | 0 | +14.1% (ks_cancel +19.5%, nw_kyc +7.5%, nw_renewal +12.2%) | +10.8% | +2.4% | 29 (10+/17=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 3 | 6 | 1/8 | 0 |
-| r5_low_credits_s2 | 0 | +14.4% (ks_cancel +18.4%, nw_kyc +9.5%, nw_renewal +12.9%) | +10.0% | +3.1% | 31 (11+/18=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 3 | 11 | 1/7 | 0 |
+| r4_decay_heavy_s2 | 0 | +13.0% (ks_cancel +16.8%, nw_kyc +5.9%, nw_renewal +12.7%) | +9.8% | +2.4% | 27 (10+/15=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 0 | 3/7 | 0 |
+| r5_low_credits | 0 | +14.4% (ks_cancel +17.4%, nw_kyc +11.1%, nw_renewal +13.0%) | +9.8% | +3.7% | 28 (10+/15=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 3 | 7 | 1/7 | 0 |
+| r5_low_credits_s2 | 0 | +14.9% (ks_cancel +15.6%, nw_kyc +8.6%, nw_renewal +17.4%) | +10.4% | +3.3% | 27 (9+/16=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 5 | 1/7 | 0 |
 | r6_odd_shapes | 0 | +20.2% (ks_cancel +25.8%, nw_kyc +30.7%, nw_renewal +10.7%) | +16.3% | +1.2% | 24 (8+/15=/1-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 0 | 1/4 | 0 |
-| r6_odd_shapes_s2 | 0 | +16.9% (ks_cancel +32.5%, nw_kyc +14.0%, nw_renewal +9.0%) | +13.7% | +1.3% | 26 (7+/19=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 3 | 2/5 | 0 |
-| r7_credit_contention | 0 | +17.5% (ks_cancel +17.8%, nw_kyc +9.8%, nw_renewal +21.7%) | +9.1% | +6.3% | 29 (9+/18=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 4 | 2/9 | 0 |
-| r7_credit_contention_s2 | 0 | +18.0% (ks_cancel +22.9%, nw_kyc +5.5%, nw_renewal +20.1%) | +10.6% | +5.5% | 32 (9+/19=/4-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 4 | 2/7 | 0 |
+| r6_odd_shapes_s2 | 0 | +16.9% (ks_cancel +32.5%, nw_kyc +14.0%, nw_renewal +9.0%) | +13.7% | +1.3% | 26 (7+/19=/0-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 1 | 3 | 2/4 | 0 |
+| r7_credit_contention | 0 | +16.6% (ks_cancel +17.8%, nw_kyc +11.4%, nw_renewal +18.3%) | +9.8% | +5.3% | 28 (10+/16=/2-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 3 | 8 | 2/7 | 0 |
+| r7_credit_contention_s2 | 0 | +16.3% (ks_cancel +21.9%, nw_kyc +4.0%, nw_renewal +17.4%) | +10.0% | +4.6% | 31 (9+/19=/3-) | exp 0, lapsed 0, conflicts 0, auto-denied 0, peak/24h 2 | 4 | 2/7 | 0 |
 
 How to read it, and what it taught us:
 
@@ -978,12 +986,12 @@ How to read it, and what it taught us:
   the audit trail: caller-ID load spreading and moving off flagged numbers (pickup +10–40 %; on
   public_02 `ks_cancel` the flagged number's share went from 50 % to 10 % on the day of the flag and 0 % after),
   cohort call-hour weights from history, and welcome/voice winners promoted with a holdout. On `pickup_rate`-primary
-  `nw_kyc` the primary KPI moved most (pickup +13.0% on public_01, +6.9% on public_02) with engagement inside its guardrail.
+  `nw_kyc` the primary KPI moved most (pickup +13.0% on public_01, +10.8% on public_02) with engagement inside its guardrail.
 * **Incidents.** public_02's unsafe supervisor prompt on `ks_cancel` was detected by a validation probe 15 minutes
-  after the edit, reverted through an approval that said so, and verified; MTTR 90 min; hallucinated
-  calls 65 on ks_cancel vs 330 vs the baseline. The supervisor's mid-experiment voice edit on `nw_renewal` was respected
+  after the edit, reverted through an approval that said so, and verified; MTTR 135 min; hallucinated
+  calls 79 on ks_cancel vs 330 vs the baseline. The supervisor's mid-experiment voice edit on `nw_renewal` was respected
   (dimension locked 48 h, experiment aborted, never overwritten).
-* **Where we were harmful, and why.** public_01: 0 of 26 — none. public_02: 2 of 28 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.015, caller-ID health +0.039); nw_renewal v15 ['voice'] (engagement -0.010, caller-ID health +0.000). These are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
+* **Where we were harmful, and why.** public_01: 0 of 26 — none. public_02: 1 of 29 — nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.015, caller-ID health +0.039). These are experiment launches or arm changes whose exploration share landed on options the grader's hidden truth rates as worse for that population; each was within 1–2 % of expected engagement, and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at 40 %; §13 lists how we'd cut it.
 * **Decay.** The decaying welcome message (`W3`) was promoted on its early lift, then rolled back: its share fell
   to 0 within 3 days of the decay onset. That is slower than we'd like: with a 15 % holdout the
   test needs a day of post-decay data, and the effect fades over two days before it is clearly negative. A winner
@@ -992,7 +1000,7 @@ How to read it, and what it taught us:
   lower the 1 % threshold (that brought back false rollbacks); instead every passing check is audited daily
   (`decay_check`) with the smallest drop it could have detected, so a miss is explainable from the store. In the
   final public_01 run W3 won on D2 and was rolled back at D6 18:00.
-* **Governance hygiene.** Across both runs: 20 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 2 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (1 on public_02), re-planned from fresh data.
+* **Governance hygiene.** Across both runs: 23 approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, at most 2 request per workflow per 24 h (policy allows 2–4). The only rejections were the approver's random judgement calls (1 on public_02), re-planned from fresh data.
 * **What we'd change next.** Faster decay detection (CUSUM on the holdout lift, larger holdout for variants
   promoted on short tests); a smaller challenger share for experiments with ≥ 3 challengers to cut launch cost.
 
@@ -1022,7 +1030,7 @@ How to read it, and what it taught us:
 3. **Power is the binding constraint**, not code: on ~600–1,000 connected calls/day a 10 % MDE takes days, and
    decay detection with a 15 % holdout takes 1–2 days after a decay completes.
 4. **Exploration has a cost.** Starting a test exposes 40 % of traffic to unproven options; the grader marks
-   some launches "harmful" by hidden truth (0 on public_01, 2 on public_02). Harm stopping limits it; it can't remove it.
+   some launches "harmful" by hidden truth (0 on public_01, 1 on public_02). Harm stopping limits it; it can't remove it.
 5. **Caller-ID fatigue is handled reactively** (relative pickup), not with a load model. A model of
    pickup vs per-number volume would allow planned rotation.
 6. **Dry runs ignore lead-pool depletion** for schedule changes (stated as an upper bound).
