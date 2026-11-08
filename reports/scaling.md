@@ -88,3 +88,11 @@ events. Same 12-CPU laptop and host conditions as the final load run.
 * **Not wired into `run.sh`:** the controller has one clock (`/sim/advance`) and one credit pool. A sharded deployment
   needs a coordinator that advances time once every shard has finished its tick, and a shared credit ledger (the fair-
   share rule already exists). This prototype measures the part that breaks first; it is not a claim that 10× is solved.
+
+## Batched JSON parsing (measured)
+
+`iter_chunk` parses 2,000 lines per `json.loads` call (`"[l1,l2,...]"`) instead of one call per line; memory stays
+bounded by the batch, and a malformed line still fails its batch → `ChunkReadError` (tested). Three alternating pairs
+on a quiet host, `scripts/bench_ingest.py <sim> --chunks 6 --repeat 1 --parse-batch {1|2000}` (1,500,000 events each):
+per-line 62,529 / 65,209 / 63,001 events/s, batched 65,778 / 65,249 / 66,072 → **≈ +3 %** ingest throughput. Small;
+kept because it is correct and free. It does not change the 10× picture: ingest stays single-core.

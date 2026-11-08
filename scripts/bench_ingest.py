@@ -64,7 +64,11 @@ def main():
     ap.add_argument("--repeat", type=int, default=2)
     ap.add_argument("--dir", default="runs", help="where the scratch store goes (avoid AV-scanned temp dirs)")
     ap.add_argument("--phases", action="store_true", help="also time inserts, rollups and commits separately")
+    ap.add_argument("--parse-batch", type=int, default=None, help="override simclient.PARSE_BATCH (1 = per-line)")
     a = ap.parse_args()
+    if a.parse_batch is not None:
+        import outcomeloop.simclient as sc
+        sc.PARSE_BATCH = a.parse_batch
     sim = SimClient(a.url)
     metas = sim.list_chunks("history")[: a.chunks]
     rates = []

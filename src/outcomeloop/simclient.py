@@ -19,6 +19,7 @@ from typing import Any, Iterator
 import httpx
 
 log = logging.getLogger("outcomeloop.sim")
+PARSE_BATCH = 2000      # lines per json.loads call when reading a chunk
 
 
 class ApiError(Exception):
@@ -172,11 +173,23 @@ class SimClient:
                     if r.status_code >= 500 or r.status_code == 429:
                         raise ChunkReadError(f"chunk {n}: HTTP {r.status_code}")
                     self._raise_for(r)
+                # parse in batches: one json.loads over "[l1,l2,...]" instead of one per line removes most of the
+                # per-call overhead (measured: scripts/bench_ingest.py) while memory stays bounded by the batch.
+                # A truncated or malformed line breaks its batch -> ValueError -> ChunkReadError, as before.
+                batch: list[str] = []
                 for line in r.iter_lines():
                     if line:
                         count += 1
                         if keep is None or keep(line):
-                            yield loads(line)
+                            if PARSE_BATCH <= 1:          # per-line path (kept for benchmarking the difference)
+                                yield loads(line)
+                                continue
+                            batch.append(line)
+                            if len(batch) >= PARSE_BATCH:
+                                yield from loads("[" + ",".join(batch) + "]")
+                                batch = []
+                if batch:
+                    yield from loads("[" + ",".join(batch) + "]")
         except (httpx.TransportError, ValueError) as e:
             self.errors += 1
             raise ChunkReadError(f"chunk {n}: {type(e).__name__}: {e}") from e

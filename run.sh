@@ -47,6 +47,10 @@ for attempt in $(seq 0 "$MAX_RESTARTS"); do
   if [[ $rc -eq 0 || $STOPPING -eq 1 ]]; then
     exit "$rc"
   fi
+  if [[ $rc -eq 3 ]]; then   # another controller holds this state file: restarting cannot help
+    echo "[run.sh] another controller already owns ${OUTCOMELOOP_DB:-state/outcomeloop.db}; not restarting" >&2
+    exit 3
+  fi
   echo "[run.sh] controller exited with status $rc (attempt $attempt); restarting from durable state in 5s" >&2
   sleep 5
 done

@@ -12,8 +12,16 @@ import os
 from pathlib import Path
 
 
+EXIT_ALREADY_RUNNING = 3   # run.sh does not restart on this code: retrying cannot help, a human must look
+
+
 class AlreadyRunning(SystemExit):
-    pass
+    """Exit code 3 (not a crash): another controller holds the state file."""
+
+    def __init__(self, message: str):
+        import sys
+        print(message, file=sys.stderr)
+        super().__init__(EXIT_ALREADY_RUNNING)
 
 
 class InstanceLock:

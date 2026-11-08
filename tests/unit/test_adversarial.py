@@ -244,3 +244,32 @@ def test_corrupted_state_file_is_archived_and_rebuilt(tmp_path, settings):
     c._prepare_db()
     assert not db.exists() and list(tmp_path.glob("state.*.corrupt"))
     assert c._rebuilt_from_corrupt
+
+
+def test_malformed_line_inside_a_parse_batch_is_a_chunk_read_error_and_counts_stay_exact():
+    import outcomeloop.simclient as sc
+    good = b"".join(b'{"type":"lead","event_id":%d}\n' % i for i in range(1, 6))
+    bad = good.replace(b'{"type":"lead","event_id":3}', b'{"type":"lead","event_id":3')   # broken mid-batch
+    with pytest.raises(ChunkReadError):
+        list(_client(lambda r: httpx.Response(200, content=bad)).iter_chunk(0, expect=5))
+    old = sc.PARSE_BATCH
+    try:
+        sc.PARSE_BATCH = 2                       # batches of 2 with a remainder: order and count preserved
+        evs = list(_client(lambda r: httpx.Response(200, content=good)).iter_chunk(0, expect=5))
+    finally:
+        sc.PARSE_BATCH = old
+    assert [e["event_id"] for e in evs] == [1, 2, 3, 4, 5]
+
+
+def test_second_instance_exits_with_a_distinct_code_run_sh_does_not_retry(tmp_path):
+    from outcomeloop.instancelock import EXIT_ALREADY_RUNNING
+    db = tmp_path / "state.db"
+    first = InstanceLock(str(db)).acquire()
+    try:
+        with pytest.raises(AlreadyRunning) as ei:
+            InstanceLock(str(db)).acquire()
+        assert ei.value.code == EXIT_ALREADY_RUNNING == 3
+    finally:
+        first.release()
+    run_sh = open(os.path.join(SRC, "..", "run.sh"), encoding="utf-8").read()
+    assert "rc -eq 3" in run_sh                          # the supervisor loop stops instead of retrying 20 times
