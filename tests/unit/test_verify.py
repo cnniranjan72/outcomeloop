@@ -57,7 +57,7 @@ def test_consistent_store_verifies_valid(db):
     ("UPDATE experiments SET status='rolled_back'", "experiment lifecycles complete", INVALID),
     ("INSERT INTO incidents VALUES ('inc-1', 0, 'hallucination', 'closed', 100, 200, '{}')",
      "incidents closed with a reason", INVALID),
-    ("INSERT INTO config_versions (wf, version, actor, minute, changed_dims) VALUES (0, 6, 'supervisor', 600, '[]')",
+    ("INSERT INTO config_versions (wf, version, actor, minute, changed_dims) VALUES (0, 6, 'business_default', 600, '[]')",
      "config history contiguous", INCOMPLETE),
     ("INSERT INTO credits_ledger (minute, wf, kind, purpose, state, cost) VALUES (10, 0, 'validation', 'probe', 'sent', 1)",
      "credits and events settled", INCOMPLETE),
@@ -67,7 +67,7 @@ def test_each_injected_fault_is_reported(db, fault, check, expected):
     _store(db)
     db.x(fault)
     assert status(db, check) == expected
-    assert render_verify(verify_store(db))[1] == (1 if expected == INVALID else 2) or expected == INCOMPLETE
+    assert render_verify(verify_store(db))[1] == (1 if expected == INVALID else 2)
 
 
 def test_orphan_decision_reference_is_invalid(db):
