@@ -130,6 +130,10 @@ def test_auto_apply_ramps_within_max_shift(ctl):
         if after != before:
             applied.append(max_shift(before, after))
             assert changed_dims(before, after) == ["caller_id"]
+            # determinism: the simulator samples a caller ID by walking the allocation in key order, so the order we
+            # send must not depend on Python's per-process set ordering (it did: public_02 diverged between runs)
+            keys = list(after["allocations"]["default"]["caller_id"])
+            assert keys == sorted(keys), keys
     assert applied, "no ramp step was applied"
     assert all(s <= 0.2 + 1e-9 for s in applied)
     # cumulative daily cap: ramp_daily_shift_multiple x max_shift

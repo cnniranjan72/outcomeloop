@@ -1395,7 +1395,7 @@ class Controller:
             a = cfg["allocations"]["default"]["caller_id"]
             b = step["allocations"]["default"]["caller_id"]
             for margin in (0.98, 0.95, 0.9, 0.8):   # rounding + canonicalisation must not push past max_shift
-                mix = {k: a.get(k, 0) + (b.get(k, 0) - a.get(k, 0)) * frac * margin for k in set(a) | set(b)}
+                mix = {k: a.get(k, 0) + (b.get(k, 0) - a.get(k, 0)) * frac * margin for k in sorted(set(a) | set(b))}
                 step["allocations"]["default"]["caller_id"] = {k: round(v, 4) for k, v in mix.items() if v > 1e-4}
                 if max_shift(cfg, canonical_config(cfg, step)) <= ms - 1e-6:
                     break
