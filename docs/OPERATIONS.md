@@ -169,7 +169,7 @@ Symptom: the log says `simulator world changed (A -> B); archiving ... to ...`.
 | Why did X change at T? | `why <wf> --at "D3 14:00"` |
 | Why is nothing being sent? | `audit --wf <wf> --kind hold` |
 | Explain one decision fully (evidence, links, before/after) | `decision <id>` (ids are the `#n` in `audit`; `--full` for all evidence) |
-| One lifecycle (experiment, incident, decay) | `audit --wf <wf> --kind "experiment_*"` |
+| One lifecycle (experiment, incident, decay) | `audit --wf <wf> --kind "experiment_*"`, then `lifecycle <exp-… / inc-… / ol-…>` |
 | What did a customer hear and why? | `customer <wf>:p<id> --day <n>` |
 | What failed? | `audit --kind error` |
 | What happened on restart? | `audit --kind recovery_reconcile` |

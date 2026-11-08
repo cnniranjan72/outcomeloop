@@ -11,6 +11,10 @@ settings. Every decision, including each decision to wait, is written to an appe
 table answers "why did workflow X change at time T, who approved it, and what happened next?" without touching
 the simulator.
 
+> **Reviewing in 20 minutes?** Start at [`evidence/README.md`](evidence/README.md): every number with its source,
+> and one experiment, one incident and one caller-ID move followed end to end from the controller's own store
+> (`python -m outcomeloop lifecycle <id>`).
+
 | Headline (from `reports/`) | Value |
 |---|---|
 | public_01 conclusion-rate lift vs no-op baseline, all workflows | `+15.3%` (0 harmful changes of 26) |
@@ -238,7 +242,7 @@ and `INSERT ... ON CONFLICT`. In production:
 ├── config/
 │   └── tenant_preferences.json # voluntary, stricter-than-policy tenant preferences (Kestrel: 11:00, 2/day)
 ├── src/outcomeloop/
-│   ├── __main__.py             # CLI: run | why | supervisor | status | audit | decision | customer | alerts
+│   ├── __main__.py             # CLI: run | why | supervisor | status | audit | decision | lifecycle | customer | alerts
 │   ├── config.py               # Settings: every tunable constant + env loading
 │   ├── controller.py           # the loop, decide(), desired config, routing, proposals, incidents, metrics
 │   ├── ingest.py               # exactly-once chunk ingestion, feature join, inbox
@@ -1092,6 +1096,7 @@ python -m outcomeloop --db state/mine01.db why nw_renewal --at "D3 14:00"
 python -m outcomeloop --db state/mine01.db audit --wf nw_renewal --kind proposal_submitted --limit 20
 python -m outcomeloop --db state/mine01.db audit --wf nw_renewal --kind "experiment_*"   # a prefix: one lifecycle
 python -m outcomeloop --db state/mine01.db decision 140                                  # one decision in full (ids from audit)
+python -m outcomeloop --db state/mine01.db lifecycle exp-0-welcome_message-0             # one experiment / incident / proposal, end to end
 python -m outcomeloop --db state/mine01.db customer nw_renewal:p0004567 --day 3
 ```
 
