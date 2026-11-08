@@ -1,0 +1,27 @@
+$ python -m outcomeloop --db state/public_02_incidents.db lifecycle inc-ks_cancel-5025
+# the supervisor's unsafe prompt: probe, incident, known-good fix, approval, apply, verification
+
+# incident inc-ks_cancel-5025 · ks_cancel
+
+hallucination incident, closed; opened D3 11:45, closed D3 18:00
+
+#140   D3 11:45  incident_opened          hallucination incident on prompt P2
+                ↳ trigger validation_probe: P2 failed 19 of 300 synthetic calls (pass 0.9367; 95% failure bound 0.0915 vs limit 0.03)
+#141   D3 11:45  validation_run           validated P1: pass_rate 0.990 (n=300, 3 credits) — candidate fix for inc-ks_cancel-5025 (known_good)
+#142   D3 11:45  incident_fix_selected    inc-ks_cancel-5025: fix = prompt P1 (known_good), validation pass 0.990 >= 0.97
+                ↳ trigger validation_probe: P1 failed 3 of 300 synthetic calls (pass 0.99; 95% failure bound 0.0915 vs limit 0.03)
+                ↳ fix P1 from known_good
+#145   D3 11:45  proposal_submitted       ol-ks_cancel-5025-21 -> PENDING: revert unsafe prompt P2 -> P1
+                ↳ impact score 0.9; affected leads 3616
+#156   D3 13:45  proposal_approved        ol-ks_cancel-5025-21: approved by client approver
+                ↳ approval apr_00008 decided 2027-01-07T13:18:00+05:30 (requested 2027-01-07T11:45:00+05:30)
+#157   D3 13:45  proposal_applied         ol-ks_cancel-5025-21: applied
+                ↳ live as config v12
+#158   D3 13:45  config_changed           v12 by controller_approved: prompt_version
+#159   D3 13:45  incident_fix_applied     inc-ks_cancel-5025: prompt P1 live (v12)
+#163   D3 18:00  incident_verified        inc-ks_cancel-5025: after fix flag rate 0.0049 vs ref 0.0137 on 412 connected calls; incident x variant: too few calls …
+                ↳ after the fix: flag rate 0.0049 vs reference 0.0137 on 412 connected (detector fired: False)
+#195   D4 14:00  post_apply_verification  ol-ks_cancel-5025-21 (v12): pickup 0.263→0.261, engagement 0.470→0.500; guardrail ok
+                ↳ 24 h before → after: pickup 0.2629 → 0.2608 (z -0.23), engagement 0.4699 → 0.5 (z 1.51); guardrail pickup_rate margin 0.02: ok
+
+Proposals involved: ol-ks_cancel-5025-21. Drill into any row: decision <id>.

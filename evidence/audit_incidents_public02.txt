@@ -1,0 +1,7 @@
+$ python -m outcomeloop --db state/public_02_incidents.db audit --kind "incident_*"
+# audit rows carry their decision id: drill in with `decision <id>`
+
+#140   D3 11:45  ks_cancel    incident_opened          controller hallucination incident on prompt P2
+#142   D3 11:45  ks_cancel    incident_fix_selected    controller inc-ks_cancel-5025: fix = prompt P1 (known_good), validation pass 0.990 >= 0.97
+#159   D3 13:45  ks_cancel    incident_fix_applied     controller inc-ks_cancel-5025: prompt P1 live (v12)
+#163   D3 18:00  ks_cancel    incident_verified        controller inc-ks_cancel-5025: after fix flag rate 0.0049 vs ref 0.0137 on 412 connected calls; incident x variant: too few calls to test

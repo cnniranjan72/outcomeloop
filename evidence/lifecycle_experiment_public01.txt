@@ -1,0 +1,65 @@
+$ python -m outcomeloop --db state/public_01_dev.db lifecycle exp-0-welcome_message-0
+# one experiment, end to end: design, daily looks, winner checks, approval, promotion, decay, rollback
+
+# experiment exp-0-welcome_message-0 · nw_renewal
+
+welcome_message: arms ['W1', 'W2', 'W3'], incumbent W1, status rolled_back, winner W3, alpha spent 0.0351 of the family budget
+
+#5     D0 00:00  experiment_designed      welcome_message: test ['W1', 'W2', 'W3'] (incumbent W1 keeps 60%)
+                ↳ design {'W1': 0.6, 'W2': 0.2, 'W3': 0.2}; planned n 889 connected per challenger; baseline engagement 0.5359; detects 10.1% relative lift
+#24    D0 10:00  proposal_submitted       ol-nw_renewal-600-3 -> PENDING: call-hour weights for 4 cohorts; per-person preferred hours for 322 treated people …
+                ↳ impact score 0.15; affected leads 2720
+#35    D0 13:15  proposal_approved        ol-nw_renewal-600-3: approved by client approver
+                ↳ approval apr_00001 decided 2027-01-04T12:54:00+05:30 (requested 2027-01-04T10:00:00+05:30)
+#36    D0 13:15  proposal_applied         ol-nw_renewal-600-3: applied
+                ↳ live as config v3
+#37    D0 13:15  config_changed           v3 by controller_approved: cohorts, welcome_message, voice, schedule
+#38    D0 13:15  experiment_started       welcome_message experiment started (v3)
+#67    D1 10:00  experiment_look          welcome_message: look t=0.165 — continue
+                ↳ look t=0.165 (alpha this look -); W1 (incumbent) 0.5387 on 388 connected
+                ↳ W2: +6.7% engagement (z 0.73, p 0.231, n 141); pickup diff 0.0074 (z 0.34)
+                ↳ W3: +14.8% engagement (z 1.7, p 0.0443, n 152); pickup diff 0.0221 (z 1.0)
+#75    D1 14:00  post_apply_verification  ol-nw_renewal-600-3 (v3): pickup 0.260→0.271, engagement 0.527→0.580; guardrail ok
+                ↳ 24 h before → after: pickup 0.2603 → 0.2714 (z 1.07), engagement 0.5272 → 0.5803 (z 2.34); guardrail pickup_rate margin 0.02: ok
+#92    D2 10:00  experiment_look          welcome_message: look t=0.388 — continue
+                ↳ look t=0.388 (alpha this look 0.00165); W1 (incumbent) 0.5525 on 1028 connected
+                ↳ W2: +5.4% engagement (z 0.96, p 0.167, n 340); pickup diff -0.0075 (z -0.52)
+                ↳ W3: +9.6% engagement (z 1.75, p 0.04, n 350); pickup diff 0.0028 (z 0.19)
+#112   D3 10:00  experiment_look          welcome_message: look t=0.604 — continue
+                ↳ look t=0.604 (alpha this look 0.01); W1 (incumbent) 0.5564 on 1623 connected
+                ↳ W2: +4.8% engagement (z 1.1, p 0.136, n 540); pickup diff -0.0034 (z -0.3)
+                ↳ W3: +8.7% engagement (z 1.98, p 0.0239, n 534); pickup diff -0.0027 (z -0.23)
+#133   D4 10:00  experiment_winner        welcome_message: winner W3 (look t=0.865, alpha_look=0.0234)
+                ↳ look t=0.865 (alpha this look 0.0234); W1 (incumbent) 0.56 on 2232 connected
+                ↳ W2: +7.1% engagement (z 1.95, p 0.0253, n 780); pickup diff 0.0112 (z 1.12)
+                ↳ W3: +9.5% engagement (z 2.6, p 0.00471, n 758); pickup diff 0.0056 (z 0.56)
+                ↳ significant after Holm: ['W3']; guardrail blocked: []; recent-window lift +6.4% (z vs overall 0.35); alongside voice=V1: +4.2% (ok)
+                ↳ per-cohort: age_18_30 +14.7%, age_31_45 +3.6%, age_46_60 +9.3%, age_60p +14.6%
+#135   D4 10:00  proposal_submitted       ol-nw_renewal-6360-18 -> PENDING: welcome_message: promoting default=W1 15%,W3 85%
+                ↳ impact score 0.548; affected leads 2531
+#149   D4 13:30  proposal_approved        ol-nw_renewal-6360-18: approved by client approver
+                ↳ approval apr_00004 decided 2027-01-08T13:04:00+05:30 (requested 2027-01-08T10:00:00+05:30)
+#150   D4 13:30  proposal_applied         ol-nw_renewal-6360-18: applied
+                ↳ live as config v10
+#151   D4 13:30  config_changed           v10 by controller_approved: welcome_message
+#152   D4 13:30  experiment_promoted      welcome_message experiment promoted (v10)
+#166   D5 10:00  decay_check              welcome_message: winner holds — lift now +0.069 (z 1.17), z vs promotion 0.52; detectable drop 0.197
+                ↳ default: lift now +0.069 (z 1.17) vs promotion +0.053 (80% LCB +0.036, z vs it 0.52); holdout 136 / winner 610 connected over 24 h; smallest detectable drop 0.1968
+#178   D5 14:00  post_apply_verification  ol-nw_renewal-6360-18 (v10): pickup 0.296→0.293, engagement 0.596→0.579; guardrail ok
+                ↳ 24 h before → after: pickup 0.2961 → 0.2928 (z -0.31), engagement 0.5957 → 0.5787 (z -0.79); guardrail pickup_rate margin 0.02: ok
+#192   D6 10:00  decay_check              welcome_message: winner holds — lift now +0.001 (z 0.02), z vs promotion -0.7; detectable drop 0.160
+                ↳ default: lift now +0.001 (z 0.02) vs promotion +0.053 (80% LCB +0.036, z vs it -0.7); holdout 147 / winner 896 connected over 24 h; smallest detectable drop 0.1598
+#218   D7 10:00  decay_check              welcome_message: winner holds — lift now -0.029 (z -0.67), z vs promotion -1.35; detectable drop 0.154
+                ↳ default: lift now -0.029 (z -0.67) vs promotion +0.053 (80% LCB +0.036, z vs it -1.35); holdout 167 / winner 870 connected over 24 h; smallest detectable drop 0.1536
+#227   D7 15:00  decay_detected           welcome_message: winner stopped winning in ['default'] — rolling back to incumbent
+                ↳ default: lift now -0.085 (z -1.94) vs promotion +0.053 (80% LCB +0.036, z vs it -2.51); holdout 149 / winner 874 connected over 24 h; smallest detectable drop 0.1529
+#228   D7 15:00  proposal_submitted       ol-nw_renewal-10980-26 -> PENDING: welcome_message: rolling_back default=W1 100%
+                ↳ impact score 0.6; affected leads 2341
+#231   D7 15:45  proposal_approved        ol-nw_renewal-10980-26: approved by client approver
+                ↳ approval apr_00008 decided 2027-01-11T15:30:00+05:30 (requested 2027-01-11T15:00:00+05:30)
+#232   D7 15:45  proposal_applied         ol-nw_renewal-10980-26: applied
+                ↳ live as config v14
+#233   D7 15:45  config_changed           v14 by controller_approved: welcome_message
+#234   D7 15:45  experiment_rolled_back   welcome_message experiment rolled_back (v14)
+
+Proposals involved: ol-nw_renewal-10980-26, ol-nw_renewal-600-3, ol-nw_renewal-6360-18. Drill into any row: decision <id>.

@@ -269,6 +269,11 @@ def _life_line(kind: str, summ: str, ev: dict) -> list[str]:
                            f" {ev.get('window_hours')} h; smallest detectable drop {r.get('detectable_drop_vs_promotion')}")
             else:
                 out.append(f"{sc}: holdout too thin ({r.get('holdout_connected')} connected)")
+    elif kind == "did_health" and ev.get("windows"):
+        for name, w in ev["windows"].items():
+            out.append(f"{name} window: pickup {w.get('pickup')} vs other numbers {w.get('others_pickup')} (ratio"
+                       f" {w.get('ratio')}, z {w.get('z')}) and vs its own past {w.get('own_past_pickup')}"
+                       f" (z {w.get('z_vs_own_past')}) on {w.get('dials')} dials")
     elif kind == "post_apply_verification" and "pickup" in ev:
         out.append(f"24 h before → after: pickup {ev['pickup']['before']} → {ev['pickup']['after']} (z {ev['pickup']['z']}),"
                    f" engagement {ev['engagement']['before']} → {ev['engagement']['after']} (z {ev['engagement']['z']});"
@@ -320,6 +325,14 @@ def lifecycle(db: DB, ref: str) -> str:
         for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE proposal_id=?",
                       (p,)):
             rows[r[0]] = r
+    if col == "proposal_id":   # what triggered it: detections on the same workflow in the hour before it was created
+        pr = db.q1("SELECT wf, created_minute FROM proposals WHERE proposal_id=?", (ref,))
+        if pr:
+            for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE wf=? AND"
+                          " minute BETWEEN ? AND ? AND kind IN ('did_health','incident_opened','incident_fix_selected',"
+                          "'experiment_winner','experiment_designed','decay_detected','supervisor_edit')",
+                          (pr[0], pr[1] - 60, pr[1])):
+                rows[r[0]] = r
     if col == "incident_id":   # the paid validation runs that served this incident (their purpose names it)
         for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE"
                       " kind='validation_run' AND summary LIKE ?", (f"%{ref}%",)):
@@ -333,6 +346,19 @@ def lifecycle(db: DB, ref: str) -> str:
             d = json.loads(e[1])
             out += [f"{d.get('dim')}: arms {d.get('arms')}, incumbent {d.get('incumbent')}, status {e[0]},"
                     f" winner {d.get('winner')}, alpha spent {d.get('alpha_spent', 0):.4f} of the family budget", ""]
+    if label == "proposal":
+        p = db.q1("SELECT route, kind, state, body, applied_version, created_minute FROM proposals WHERE proposal_id=?",
+                  (ref,))
+        if p:
+            b = json.loads(p[3] or "{}")
+            out.append(f"{p[0]} route, {p[1]}, state {p[2]}" + (f", applied as v{p[4]}" if p[4] is not None else "")
+                       + f"; created {minute_to_label(p[5])}")
+            if b.get("rationale"):
+                out.append(f"Rationale: {_fmt_ev(b['rationale'], 300)}")
+            cid = (b.get("evidence") or {}).get("caller_id") or {}
+            if cid:
+                out.append("Caller-ID health: " + ", ".join(f"{d} {v.get('state')}" for d, v in sorted(cid.items())))
+            out.append("")
     if label == "incident":
         i = db.q1("SELECT type, state, opened_minute, closed_minute FROM incidents WHERE incident_id=?", (ref,))
         if i:

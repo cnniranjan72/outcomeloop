@@ -1,0 +1,55 @@
+$ python -m outcomeloop --db state/public_02_incidents.db status
+
+# OutcomeLoop status at D9 21:00
+
+events ingested: 324,350 in 18.2s (17,848 events/s while ingesting)
+ingest lag: 180 sim-minutes · credits remaining: 194 · open proposals: 0 · peak RSS: 116.2 MB
+wall seconds per sim day: 0:5s, 1:5s, 2:5s, 3:5s, 4:6s, 5:5s, 6:5s, 7:6s, 8:6s, 9:6s
+
+## Recent alerts / incidents
+  D4 13:00 wf0 decay_detected: welcome_message: winner stopped winning in ['default'] — rolling back to incumbent
+  D3 11:45 wf2 incident_opened: hallucination incident on prompt P2
+
+## Proposals by state
+  APPLIED: 29
+  REJECTED: 1
+  STALE: 2
+
+## Decisions by kind
+  config_changed: 31
+  post_apply_verification: 28
+  experiment_look: 27
+  cohort_check: 26
+  person_time_refresh: 20
+  auto_apply: 17
+  hold: 16
+  proposal_submitted: 15
+  did_health: 15
+  approval_decided: 15
+  proposal_approved: 14
+  proposal_applied: 12
+  person_time_look: 10
+  experiment_started: 7
+  experiment_designed: 7
+  decay_check: 7
+  experiment_no_winner: 3
+  experiment_extended: 3
+  experiment_drop_arm: 3
+  experiment_closed: 3
+  bootstrap: 3
+  validation_run: 2
+  supervisor_edit: 2
+  proposal_stale: 2
+  experiment_winner: 2
+  experiment_promoted: 2
+  proposal_rejected: 1
+  incident_verified: 1
+  incident_opened: 1
+  incident_fix_selected: 1
+  incident_fix_applied: 1
+  experiment_skipped: 1
+  experiment_rolled_back: 1
+  experiment_aborted: 1
+  decay_detected: 1
+  controller_start: 1
+  controller_finish: 1
