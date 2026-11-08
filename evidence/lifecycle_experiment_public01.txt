@@ -25,14 +25,17 @@ welcome_message: arms ['W1', 'W2', 'W3'], incumbent W1, status rolled_back, winn
                 ↳ look t=0.388 (alpha this look 0.00165); W1 (incumbent) 0.5525 on 1028 connected
                 ↳ W2: +5.4% engagement (z 0.96, p 0.167, n 340); pickup diff -0.0075 (z -0.52)
                 ↳ W3: +9.6% engagement (z 1.75, p 0.04, n 350); pickup diff 0.0028 (z 0.19)
+                ↳ Holm (80% of this look's alpha, step-down): W3 p 0.04 > 0.00066 ✗; W2 p 0.167 > 0.00132 ✗
 #112   D3 10:00  experiment_look          welcome_message: look t=0.604 — continue
                 ↳ look t=0.604 (alpha this look 0.01); W1 (incumbent) 0.5564 on 1623 connected
                 ↳ W2: +4.8% engagement (z 1.1, p 0.136, n 540); pickup diff -0.0034 (z -0.3)
                 ↳ W3: +8.7% engagement (z 1.98, p 0.0239, n 534); pickup diff -0.0027 (z -0.23)
+                ↳ Holm (80% of this look's alpha, step-down): W3 p 0.0239 > 0.004 ✗; W2 p 0.136 > 0.008 ✗
 #133   D4 10:00  experiment_winner        welcome_message: winner W3 (look t=0.865, alpha_look=0.0234)
                 ↳ look t=0.865 (alpha this look 0.0234); W1 (incumbent) 0.56 on 2232 connected
                 ↳ W2: +7.1% engagement (z 1.95, p 0.0253, n 780); pickup diff 0.0112 (z 1.12)
                 ↳ W3: +9.5% engagement (z 2.6, p 0.00471, n 758); pickup diff 0.0056 (z 0.56)
+                ↳ Holm (80% of this look's alpha, step-down): W3 p 0.00471 ≤ 0.00936 ✓; W2 p 0.0253 > 0.0187 ✗
                 ↳ significant after Holm: ['W3']; guardrail blocked: []; recent-window lift +6.4% (z vs overall 0.35); alongside voice=V1: +4.2% (ok)
                 ↳ per-cohort: age_18_30 +14.7%, age_31_45 +3.6%, age_46_60 +9.3%, age_60p +14.6%
 #135   D4 10:00  proposal_submitted       ol-nw_renewal-6360-18 -> PENDING: welcome_message: promoting default=W1 15%,W3 85%

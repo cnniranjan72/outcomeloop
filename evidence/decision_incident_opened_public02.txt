@@ -9,6 +9,9 @@ Why:   population evidence (validation run of n synthetic calls, or QA flag rate
 Linked:
   incident inc-ks_cancel-5025: hallucination, closed, opened D3 11:45, closed D3 18:00
 
+Key numbers:
+  trigger validation_probe: P2 failed 19 of 300 synthetic calls (pass 0.9367; 95% failure bound 0.0915 vs limit 0.03)
+
 Evidence:
   {
     "basis": "below the gate",
