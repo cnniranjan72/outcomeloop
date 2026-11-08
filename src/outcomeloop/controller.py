@@ -35,6 +35,11 @@ from .timeutil import minute_to_label
 POST_CONNECT_DIMS = {"welcome_message", "voice", "prompt_version"}
 
 
+def _alloc_incumbent(cfg: dict, dim: str) -> str:
+    d = ((cfg.get("allocations") or {}).get("default") or {}).get(dim) or {}
+    return max(sorted(d), key=lambda o: d[o]) if d else "?"
+
+
 def fair_share_ok(spent: dict, tenant, cost: float, budget0: float, n_tenants: int, contenders: set) -> bool:
     """Work-conserving fair share of one credit pool: a tenant may always spend while no *other* tenant has an open
     incident; under contention it may spend only up to its equal share of the starting budget."""
@@ -1051,7 +1056,36 @@ class Controller:
                 if conn < 500:
                     continue
                 days = min(7, (now - (db.q1("SELECT MIN(minute) FROM calls WHERE wf=?", (wf,))[0] or now)) / 1440) or 1
+                if db.kv_get(f"skip_until:{wf}:{dim}", -1) > now:
+                    continue
                 e = self.exp.design(wf, dim, cfg, spec["options"][dim], black, now, eng / conn, conn / days)
+                if e:
+                    # value of information: drop challengers our own last test already showed cannot plausibly reach
+                    # the effect this test is sized for (stricter when the incumbent is a supervisor's choice)
+                    strict = dim in set(db.kv_get(f"supervisor_dims:{wf}", []))
+                    chal = [o for o in e.arms if o != e.incumbent]
+                    keep, screen = self.exp.prior_screen(wf, dim, e.incumbent, chal, now, strict)
+                    if len(keep) < len(chal):
+                        opts = [o for o in spec["options"][dim] if o == e.incumbent or o in keep]
+                        e = self.exp.design(wf, dim, cfg, opts, black, now, eng / conn, conn / days) if keep else None
+                        with db.tx():
+                            if e is None:
+                                db.kv_set(f"skip_until:{wf}:{dim}", now + int(self.s.no_winner_cooldown_days * 1440))
+                                db.decide(now, wf, "experiment_skipped",
+                                          f"{dim}: no challenger worth testing against "
+                                          f"{_alloc_incumbent(cfg, dim)} — prior evidence ({screen['source']}) puts every"
+                                          f" challenger's 80% upper bound below {screen['bar_rel']:.0%}",
+                                          evidence=screen,
+                                          reasoning="a test moves up to 40% of traffic to challengers; spending it on"
+                                                    " options our own randomised evidence says cannot reach the planned"
+                                                    " effect is exploration cost without information"
+                                                    + (" (the incumbent is a supervisor's choice: full-MDE bar)" if strict
+                                                       else ""))
+                            else:
+                                db.decide(now, wf, "experiment_screened",
+                                          f"{dim}: dropped {[c for c in chal if c not in keep]} before the test — prior"
+                                          f" evidence ({screen['source']}) puts their 80% upper bound below"
+                                          f" {screen['bar_rel']:.0%}", evidence=screen)
                 if e:
                     with db.tx():
                         e.save(db, now)

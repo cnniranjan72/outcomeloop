@@ -37,6 +37,8 @@ class Settings:
     rollback_blacklist_days: float = 7.0    # a decayed option is not re-tested for a week
     harm_blacklist_days: float = 14.0       # an option dropped as significantly worse: two weeks
     no_winner_cooldown_days: float = 3.0    # a dimension with no winner is not re-tested immediately
+    prior_max_age_days: float = 14.0   # prior experiment evidence older than this is not used to screen challengers
+    prior_min_connected: int = 200     # an option needs this many connected calls in the prior test to be screened
 
     # ---- cohorts (C2/C3)
     min_cohort_share: float = 0.10

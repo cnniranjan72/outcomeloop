@@ -305,3 +305,32 @@ def test_interaction_blocks_a_winner_that_loses_where_it_will_run(db, eng):
     # no interaction: the same winner passes when it also wins within the dominant stratum
     ok = eng.look(exp(arms=("V1", "V2")), NOW, [], {**GUARD, "other": ("welcome_message", "W2")}, final_due=True)
     assert not ok["interaction"]["V2"]["blocked"] and ok["action"] == "promote"
+
+
+def _prior(db, inc, arms, minute, dim="voice", status="aborted", eid="exp-prior"):
+    """A finished experiment's last look: inc=(option, connected, engaged), arms={option: (connected, engaged)}."""
+    import json as _j
+    look = {"incumbent": {"option": inc[0], "connected": inc[1], "engaged": inc[2]},
+            "arms": {o: {"connected": n, "engaged": e} for o, (n, e) in arms.items()}}
+    db.x("INSERT INTO experiments VALUES (?,?,?,?,?,?,?)",
+         (eid, WF, dim, status, _j.dumps({"looks": [look], "arms": [inc[0], *arms]}), minute - 5 * DAY, minute))
+
+
+def test_prior_screen_public02_retest_of_supervisor_choice_is_skipped(db, eng):
+    # public_02 nw_renewal: the aborted voice test measured V2 +0.35 %, V3 +2.6 % vs V1 (both noise). The supervisor
+    # then chose V2. Re-testing V1/V3 against V2 cannot plausibly find the ~10 % effect a test is sized for.
+    _prior(db, ("V1", 2900, 1595), {"V2": (648, 358), "V3": (663, 374)}, NOW - DAY)
+    keep, ev = eng.prior_screen(WF, "voice", "V2", ["V1", "V3"], NOW, strict=True)
+    assert keep == [] and ev["source"] == "exp-prior"
+    assert ev["challengers"]["V3"]["ucb80_rel"] < 0.10
+    keep2, _ = eng.prior_screen(WF, "voice", "V2", ["V1", "V3"], NOW, strict=False)   # normal bar: half the MDE
+    assert keep2 == ["V3"]                                                               # V3 might still win
+
+
+def test_prior_screen_keeps_promising_unmeasured_and_ignores_stale_evidence(db, eng):
+    _prior(db, ("V1", 2000, 1000), {"V2": (600, 360)}, NOW - DAY)            # V2 +20 %: clearly worth testing
+    assert eng.prior_screen(WF, "voice", "V1", ["V2", "V4"], NOW, strict=True)[0] == ["V2", "V4"]  # V4 unmeasured
+    assert eng.prior_screen(WF, "welcome_message", "W1", ["W2"], NOW, strict=True)[0] == ["W2"]    # no prior at all
+    _prior(db, ("W1", 2000, 1000), {"W2": (600, 300)}, NOW - 20 * DAY, dim="welcome_message", eid="old")
+    keep, ev = eng.prior_screen(WF, "welcome_message", "W1", ["W2"], NOW, strict=True)
+    assert keep == ["W2"] and ev["source"] is None                           # 20 days old: not used

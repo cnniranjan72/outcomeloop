@@ -99,6 +99,14 @@ itself restarts the controller if it exits abnormally.
 * **Test.** One-sided two-proportion z-test on engagement (engaged ÷ connected) of each challenger vs the
   incumbent, using only calls that actually ran with that variant under the experiment's config versions
   (Product: only what happened counts).
+* **Is the test worth running? (value of information).** Before a test, each challenger is screened against the
+  last finished experiment on the same dimension (concurrent, randomised arms, ≤ 14 days old): its 80 % upper bound
+  of lift over the *current* incumbent must reach half the planned MDE — the full MDE when the incumbent is a
+  supervisor's choice (overriding a deliberate human decision needs real promise). Screened challengers are dropped
+  (`experiment_screened`); if none remain, no test (`experiment_skipped`, 3-day cooldown). Found on public_02: the
+  moment a supervisor's 48 h voice lock expired we re-tested V1/V3, which our own aborted test had measured within a
+  few points of the supervisor's V2 — 40 % of traffic for no plausible gain, graded harmful. Unmeasured options are
+  never screened, so this cannot stop exploration of anything new.
 * **Stopping rule.** Daily looks at the approver's start hour. Lan-DeMets **O'Brien-Fleming** spending
   `α(t) = 2 − 2Φ(z_{α/2}/√t)` with information fraction `t = n / n_plan`; each look's nominal level is the
   increment of spent α, and α is tracked as an **explicit budget** on the experiment, so the family-wise

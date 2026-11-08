@@ -160,6 +160,53 @@ class ExperimentEngine:
         e.horizon_days = s.max_experiment_days
         return e
 
+    # ------------------------------------------------------------------ prior evidence (value of information)
+    def prior_screen(self, wf: int, dim: str, incumbent: str, challengers: list[str], now: int,
+                     strict: bool) -> tuple[list[str], dict]:
+        """Which challengers are still worth testing, given the last finished experiment on this dimension?
+
+        Its arms ran concurrently and randomised, so their engagement rates are comparable (a history comparison
+        across periods would be time-confounded). For each challenger measured there alongside the *current*
+        incumbent, the 80 % upper confidence bound of its relative lift must reach a bar: half the planned MDE
+        normally, the full MDE when the incumbent is a supervisor's choice (overriding a deliberate human decision
+        needs real promise). A challenger that cannot plausibly reach the effect the test is sized to detect is not
+        worth 40 % of a workflow's traffic. Unmeasured challengers are kept; evidence older than
+        `prior_max_age_days` is ignored (campaign mix moves)."""
+        s = self.s
+        out = {"bar_rel": s.mde_rel if strict else s.mde_rel / 2, "strict": strict, "challengers": {}}
+        row = self.db.q1("SELECT experiment_id, data, updated_minute FROM experiments WHERE wf=? AND dim=? AND status"
+                         " NOT IN ('designed','running','promoting','rolling_back') AND updated_minute>=?"
+                         " ORDER BY updated_minute DESC LIMIT 1", (wf, dim, now - int(s.prior_max_age_days * 1440)))
+        if not row:
+            out["source"] = None
+            return list(challengers), out
+        d = json.loads(row[1])
+        rates: dict[str, tuple[int, int]] = {}
+        for lk in d.get("looks") or []:          # latest measurement of each option (dropped arms stop appearing)
+            inc = lk.get("incumbent") or {}
+            if inc.get("option"):
+                rates[inc["option"]] = (inc.get("connected", 0), inc.get("engaged", 0))
+            for o, a in (lk.get("arms") or {}).items():
+                rates[o] = (a.get("connected", 0), a.get("engaged", 0))
+        out["source"] = row[0]
+        keep = []
+        ni, ei = rates.get(incumbent, (0, 0))
+        for c in challengers:
+            nc, ec = rates.get(c, (0, 0))
+            if min(ni, nc) < s.prior_min_connected:
+                out["challengers"][c] = {"kept": True, "reason": "not measured enough in the prior experiment"}
+                keep.append(c)
+                continue
+            pi, pc = ei / ni, ec / nc
+            se = (pi * (1 - pi) / ni + pc * (1 - pc) / nc) ** 0.5
+            ucb_rel = (pc - pi + z_of(0.2) * se) / pi if pi > 0 else 1.0
+            ok = ucb_rel >= out["bar_rel"]
+            out["challengers"][c] = {"kept": ok, "lift_rel": round((pc - pi) / pi, 4) if pi else None,
+                                     "ucb80_rel": round(ucb_rel, 4), "connected": [ni, nc]}
+            if ok:
+                keep.append(c)
+        return keep, out
+
     # ------------------------------------------------------------------ config sync
     def on_config(self, e: Experiment, cfg: dict, version: int, actor: str, changed: list[str], minute: int) -> str | None:
         """Update experiment state from a newly observed config version. Returns a transition name or None."""
