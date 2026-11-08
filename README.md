@@ -23,7 +23,7 @@ the simulator.
 | public_03 ingest throughput (4 vCPU / 8 GB container) | `~47,000` history, `~39,000` live events/s (`reports/scaling.md`) |
 | public_03 controller seconds per simulated day (container, 1×) | `49 s` (SRE target 600 s; ≈ 460 s *projected* at 10×) |
 | public_03 peak controller memory | `361 MB` (was 1,046 MB; `reports/memory.md`) |
-| Tests | `229` (227 unit + 2 slow integration) |
+| Tests | `230` (228 unit + 2 slow integration) |
 | Crash-recovery run (kill / restart / verify) | `9 hard kills, 20 verification checks, 0 failed` |
 | Robustness suite (7 generated scenarios × 2 seeds + 2 public seeds) | `16/16` pass, 0 decision errors, 0 false winners in 12 null experiments |
 
