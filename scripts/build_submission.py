@@ -126,12 +126,34 @@ def main():
     _days = sorted(dec2.items(), key=lambda kv: int(kv[0]))
     decay_days = next((int(d) - int(_days[0][0]) for d, v in _days if v == 0), None)  # keys are sim days
     n1, n2 = g1["controller_changes"]["count"], g2["controller_changes"]["count"]
-    harm_explain = ("public_01: {k1} of {n1} — {lst1}. public_02: {k} of {n2} — {lst}. These are "
-                    "experiment launches or arm changes whose exploration share landed on options the grader's hidden truth "
-                    "rates as worse for that population; each was within 1–2 % of expected engagement, "
-                    "and the harm watch / no-winner rules then took the traffic back. This is the price of exploring at "
-                    "40 %; §13 lists how we'd cut it.").format(n1=n1, n2=n2, k=len(h2), lst="; ".join(h2) or "none",
-                                                     k1=len(h1), lst1="; ".join(h1) or "none")
+    def why_harm(store: str, g) -> list[str]:
+        """Classify each harmful change from the proposal that produced it, in our own store."""
+        import sqlite3 as _sq
+        out = []
+        dbp = ROOT / "state" / store
+        con = _sq.connect(f"file:{dbp}?mode=ro", uri=True) if dbp.exists() else None
+        for j in g["controller_changes"]["detail"]:
+            if j["verdict"] != "harmful":
+                continue
+            kind = "operational change"
+            if con:
+                r = con.execute("SELECT p.body FROM config_versions v JOIN workflows w ON w.wf=v.wf JOIN proposals p ON"
+                                " p.proposal_id=v.proposal_id WHERE w.workflow_id=? AND v.version=?",
+                                (j["workflow_id"], j["version"])).fetchone()
+                summ = json.loads(r[0]).get("change_summary", "") if r else ""
+                kind = ("a promotion: the winner's measured lift had faded in truth by apply time (the holdout's decay "
+                        "test exists for this)" if "promoting" in summ else
+                        "an experiment allocation: exploration onto an option worse in truth" if ("designed" in summ or
+                                                                                                "running" in summ)
+                        else "a rollback" if "rolling_back" in summ else kind)
+            out.append(f"{j['workflow_id']} v{j['version']} (engagement {j['engage_delta']:+.3f}): {kind}")
+        return out
+    harm_explain = ("public_01: {k1} of {n1}{lst1}. public_02: {k} of {n2}{lst}. Classified from the proposal behind each"
+                    " version in our own store. Exploration costs are the price of a 40 % challenger share; the value-of-"
+                    "information screen removes re-tests with nothing to learn (§13).").format(
+        n1=n1, n2=n2, k=len(h2), k1=len(h1),
+        lst=(" — " + "; ".join(why_harm("public_02_incidents.db", g2))) if h2 else "",
+        lst1=(" — " + "; ".join(why_harm("public_01_dev.db", g1))) if h1 else "")
     gov_line = (f"Across both runs: {g1['governance']['approval_requests'] + g2['governance']['approval_requests']} "
                 f"approval requests, 0 expired, 0 lapsed, 0 apply conflicts, 0 auto-apply attempts rejected by policy, "
                 f"at most {max(list(g1['governance']['peak_requests_per_24h'].values()) + list(g2['governance']['peak_requests_per_24h'].values()))} "
@@ -199,7 +221,7 @@ def main():
         "{{P01_ALL}}": pct(a1), "{{P02_ALL}}": pct(a2), "{{P02_MTTR}}": str(mttr),
         "{{P01_PRIMARY}}": primary(g1, ["nw_renewal", "nw_kyc", "ks_cancel"]),
         "{{P01_HARM}}": f"{len(h1)} harmful of {n1} applied changes",
-        "{{P02_HARM}}": f"{len(h2)} harmful of {n2} applied (both small exploration costs, §11)" if len(h2) == 2 else f"{len(h2)} harmful of {n2} applied (an exploration cost: an experiment launch onto a challenger that was worse in truth, §11)" if len(h2) == 1 else f"{len(h2)} harmful of {n2} applied",
+        "{{P02_HARM}}": f"{len(h2)} harmful of {n2} applied" + (f" ({'; '.join(h2)}; each explained in §11)" if h2 else ""),
         "{{CRASH_SUMMARY}}": f"9 hard kills on public_02; verification {crash_line}",
         "{{LOAD_SUMMARY}}": f"{eps} events/s ingest, {ctrl_day} of controller time per simulated day for 12 workflows{slow}{cont}, {rss} peak memory",
         "{{LOAD_MACHINE}}": machine, "{{LOAD_TABLE}}": load_table, "{{LOAD_TICK}}": tick, "{{LOAD_CTRL_DAY}}": ctrl_day,

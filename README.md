@@ -13,17 +13,18 @@ the simulator.
 
 > **Reviewing in 20 minutes?** Start at [`evidence/README.md`](evidence/README.md): every number with its source,
 > and one experiment, one incident and one caller-ID move followed end to end from the controller's own store
-> (`python -m outcomeloop lifecycle <id>`).
+> (`python -m outcomeloop lifecycle <id>`). Don't trust it, check it: `verify` audits the store's integrity, `replay <id>`
+> recomputes a decision from raw rows, and `python scripts/evaluate.py` reproduces the evaluation from fresh runs.
 
 | Headline (from `reports/`) | Value |
 |---|---|
 | public_01 conclusion-rate lift vs no-op baseline, all workflows | `+15.3%` (0 harmful changes of 26) |
-| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+25.7%` (1 harmful of 29) |
-| public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `135 min` (detected in 15 min; the rest is approver latency) |
+| public_02 conclusion-rate lift vs no-op baseline, all workflows | `+25.3%` (2 harmful of 27) |
+| public_02 time to fix the supervisor's unsafe prompt (grader MTTR) | `105 min` (detected in 15 min; the rest is approver latency) |
 | public_03 ingest throughput (4 vCPU / 8 GB container) | `~47,000` history, `~39,000` live events/s (`reports/scaling.md`) |
 | public_03 controller seconds per simulated day (container, 1×) | `49 s` (SRE target 600 s; ≈ 460 s *projected* at 10×) |
 | public_03 peak controller memory | `361 MB` (was 1,046 MB; `reports/memory.md`) |
-| Tests | `230` (228 unit + 2 slow integration) |
+| Tests | `253` (251 unit + 2 slow integration) |
 | Crash-recovery run (kill / restart / verify) | `9 hard kills, 20 verification checks, 0 failed` |
 | Robustness suite (7 generated scenarios × 2 seeds + 2 public seeds) | `16/16` pass, 0 decision errors, 0 false winners in 12 null experiments |
 
@@ -242,7 +243,7 @@ and `INSERT ... ON CONFLICT`. In production:
 ├── config/
 │   └── tenant_preferences.json # voluntary, stricter-than-policy tenant preferences (Kestrel: 11:00, 2/day)
 ├── src/outcomeloop/
-│   ├── __main__.py             # CLI: run | why | supervisor | status | audit | decision | lifecycle | customer | alerts
+│   ├── __main__.py             # CLI: run | why | supervisor | status | audit | decision | lifecycle | verify | replay | customer | alerts
 │   ├── config.py               # Settings: every tunable constant + env loading
 │   ├── controller.py           # the loop, decide(), desired config, routing, proposals, incidents, metrics
 │   ├── ingest.py               # exactly-once chunk ingestion, feature join, inbox
@@ -1097,6 +1098,8 @@ python -m outcomeloop --db state/mine01.db audit --wf nw_renewal --kind proposal
 python -m outcomeloop --db state/mine01.db audit --wf nw_renewal --kind "experiment_*"   # a prefix: one lifecycle
 python -m outcomeloop --db state/mine01.db decision 140                                  # one decision in full (ids from audit)
 python -m outcomeloop --db state/mine01.db lifecycle exp-0-welcome_message-0             # one experiment / incident / proposal, end to end
+python -m outcomeloop --db state/mine01.db verify                                       # 11 integrity checks over the store
+python -m outcomeloop --db state/mine01.db replay 133                                   # recompute one decision from raw rows
 python -m outcomeloop --db state/mine01.db customer nw_renewal:p0004567 --day 3
 ```
 

@@ -37,6 +37,18 @@ python -m outcomeloop --db state/public_02_incidents.db why ks_cancel --at "D3 1
 python -m outcomeloop --db state/public_02_incidents.db customer ks_cancel:p<id>              # one person
 ```
 
+## Don't trust it — check it
+
+| check | command | what it proves |
+|---|---|---|
+| integrity of the whole store | `python -m outcomeloop --db <store> verify` | event sequence, governance boundary, supervisor edits acknowledged, references, lifecycles, settled state — VALID / INVALID / INCOMPLETE / NOT VERIFIABLE with the records |
+| one decision, recomputed | `python -m outcomeloop --db <store> replay <id>` | experiment looks recounted from raw calls; caller-ID detector re-run; validations against the credits ledger |
+| the whole evaluation, fresh | `python scripts/evaluate.py` → `reports/EVALUATION.md` | prerequisites, tests, public_01 + public_02 run fresh and graded, both stores verified |
+| runs are reproducible | `scripts/determinism_check.sh` | two runs with different controller hash seeds: identical decisions and simulator events |
+| behaviour in hard situations | `docs/DECISION_QUALITY.md` | 20 situations: expected, forbidden, audit evidence, tests |
+| a reviewer trying to say no | `docs/ADVERSARIAL_REVIEW.md` | 12 attempts and what they found |
+| real decisions, link by link | [`DECISION_EVIDENCE.md`](DECISION_EVIDENCE.md) | an experiment that faded and was rolled back, the prompt incident, a stale / rejected proposal, a test not run |
+
 ## Minutes 12–17 · would it survive production?
 
 | claim | evidence |

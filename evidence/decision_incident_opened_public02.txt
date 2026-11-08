@@ -1,7 +1,7 @@
-$ python -m outcomeloop --db state/public_02_incidents.db decision 140
+$ python -m outcomeloop --db state/public_02_incidents.db decision 134
 # one decision in full: reasoning, evidence, linked incident, before / after
 
-# decision #140 — incident_opened · D3 11:45 · ks_cancel · by controller
+# decision #134 — incident_opened · D3 11:45 · ks_cancel · by controller
 
 What:  hallucination incident on prompt P2
 Why:   population evidence (validation run of n synthetic calls, or QA flag rate on >=250 connected calls) shows the live prompt is unsafe
@@ -34,18 +34,18 @@ Evidence:
   }
 
 Before:
-  #135   D3 11:00  experiment_look          voice: look t=0.626 — continue
-  #136   D3 11:00  proposal_submitted       ol-ks_cancel-4980-20 -> PENDING: voice: running default=V1 73%,V2 13%,V3 13%
-  #137   D3 11:30  config_changed           v11 by supervisor: prompt_version
-  #138   D3 11:30  supervisor_edit          supervisor changed ['prompt_version']; locked for 48h — we will not propose changes to these dims
-  #139   D3 11:45  validation_run           validated P2: pass_rate 0.937 (n=300, 3 credits) — probe supervisor prompt change v11
+  #129   D3 11:00  experiment_drop_arm      voice: dropping ['V2']
+  #130   D3 11:00  proposal_submitted       ol-ks_cancel-4980-19 -> PENDING: voice: running default=V1 87%,V3 13%
+  #131   D3 11:30  config_changed           v12 by supervisor: prompt_version
+  #132   D3 11:30  supervisor_edit          supervisor changed ['prompt_version']; locked for 48h — we will not propose changes to these dims
+  #133   D3 11:45  validation_run           validated P2: pass_rate 0.937 (n=300, 3 credits) — probe supervisor prompt change v12
 
 After:
-  #141   D3 11:45  validation_run           validated P1: pass_rate 0.990 (n=300, 3 credits) — candidate fix for inc-ks_cancel-5025 (known_good)
-  #142   D3 11:45  incident_fix_selected    inc-ks_cancel-5025: fix = prompt P1 (known_good), validation pass 0.990 >= 0.97
-  #143   D3 11:45  experiment_look          welcome_message: look t=0.696 — continue
-  #144   D3 11:45  experiment_look          voice: look t=0.639 — continue
-  #145   D3 11:45  proposal_submitted       ol-ks_cancel-5025-21 -> PENDING: revert unsafe prompt P2 -> P1
-  #146   D3 11:37  approval_decided         apr_00007 approved
-  #147   D3 12:00  proposal_approved        ol-ks_cancel-4980-20: approved by client approver
-  #151   D3 12:00  did_health               caller ID D2: degraded -> probe
+  #135   D3 11:45  validation_run           validated P1: pass_rate 0.990 (n=300, 3 credits) — candidate fix for inc-ks_cancel-5025 (known_good)
+  #136   D3 11:45  incident_fix_selected    inc-ks_cancel-5025: fix = prompt P1 (known_good), validation pass 0.990 >= 0.97
+  #137   D3 11:45  experiment_look          welcome_message: look t=0.699 — continue
+  #138   D3 11:45  experiment_look          voice: look t=0.621 — continue
+  #139   D3 11:45  proposal_submitted       ol-ks_cancel-5025-20 -> PENDING: revert unsafe prompt P2 -> P1
+  #142   D3 12:00  did_health               caller ID D2: degraded -> probe
+  #144   D3 12:00  post_apply_verification  ol-ks_cancel-3600-15 (v9): pickup 0.262→0.264, engagement 0.523→0.502; guardrail ok
+  #145   D3 13:00  post_apply_verification  ol-ks_cancel-3660-16 (v10): pickup 0.261→0.271, engagement 0.526→0.502; guardrail ok

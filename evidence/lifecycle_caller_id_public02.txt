@@ -1,19 +1,19 @@
-$ python -m outcomeloop --db state/public_02_incidents.db lifecycle ol-ks_cancel-3600-16
+$ python -m outcomeloop --db state/public_02_incidents.db lifecycle ol-ks_cancel-3600-15
 # moving traffic off a degraded caller ID through the policy-permitted auto route
 
-# proposal ol-ks_cancel-3600-16 · ks_cancel
+# proposal ol-ks_cancel-3600-15 · ks_cancel
 
-auto route, urgent, state APPLIED, applied as v8; created D2 12:00
+auto route, urgent, state APPLIED, applied as v9; created D2 12:00
 Rationale: Move traffic off degraded caller IDs D2. Spread dials evenly over healthy numbers (lower per-number volume), 5% probe on untested numbers so their health is measured before they carry real volume.
 Caller-ID health: D1 healthy, D2 degraded, D3 healthy
 
-#107   D2 12:00  did_health               caller ID D2: healthy -> degraded
-                ↳ fast window: pickup 0.1542 vs other numbers 0.3108 (ratio 0.496, z -6.41) and vs its own past 0.2451 (z -4.94) on 402 dials
-                ↳ long window: pickup 0.2417 vs other numbers 0.2614 (ratio 0.925, z -2.68) and vs its own past 0.2451 (z -0.51) on 5891 dials
-                ↳ slow window: pickup 0.2414 vs other numbers 0.2796 (ratio 0.863, z -2.86) and vs its own past 0.2451 (z -0.32) on 1578 dials
-#109   D2 12:00  auto_apply               auto-apply ['caller_id'] -> APPLIED (ramp 60% of the way)
-#110   D2 12:00  config_changed           v8 by controller_auto: caller_id
-#153   D3 12:00  post_apply_verification  ol-ks_cancel-3600-16 (v8): pickup 0.267→0.264, engagement 0.509→0.475; guardrail ok
-                ↳ 24 h before → after: pickup 0.2671 → 0.264 (z -0.35), engagement 0.5094 → 0.4751 (z -1.73); guardrail pickup_rate margin 0.02: ok
+#106   D2 12:00  did_health               caller ID D2: healthy -> degraded
+                ↳ fast window: pickup 0.1642 vs other numbers 0.3068 (ratio 0.535, z -5.78) and vs its own past 0.2441 (z -4.27) on 408 dials
+                ↳ long window: pickup 0.2354 vs other numbers 0.261 (ratio 0.902, z -3.51) and vs its own past 0.2441 (z -1.35) on 5893 dials
+                ↳ slow window: pickup 0.2278 vs other numbers 0.2782 (ratio 0.819, z -3.82) and vs its own past 0.2441 (z -1.47) on 1576 dials
+#108   D2 12:00  auto_apply               auto-apply ['caller_id'] -> APPLIED (ramp 60% of the way)
+#109   D2 12:00  config_changed           v9 by controller_auto: caller_id
+#144   D3 12:00  post_apply_verification  ol-ks_cancel-3600-15 (v9): pickup 0.262→0.264, engagement 0.523→0.502; guardrail ok
+                ↳ 24 h before → after: pickup 0.2617 → 0.264 (z 0.26), engagement 0.5231 → 0.502 (z -1.06); guardrail pickup_rate margin 0.02: ok
 
-Proposals involved: ol-ks_cancel-3600-16. Drill into any row: decision <id>.
+Proposals involved: ol-ks_cancel-3600-15. Drill into any row: decision <id>.

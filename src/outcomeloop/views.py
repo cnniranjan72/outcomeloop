@@ -349,10 +349,16 @@ def lifecycle(db: DB, ref: str) -> str:
                           "'experiment_winner','experiment_designed','decay_detected','supervisor_edit')",
                           (pr[0], pr[1] - 60, pr[1])):
                 rows[r[0]] = r
-    if col == "incident_id":   # the paid validation runs that served this incident (their purpose names it)
+    if col == "incident_id":   # paid validation runs that served it (purpose names it), the probe that opened it,
+        inc = db.q1("SELECT wf, opened_minute FROM incidents WHERE incident_id=?", (ref,))   # and the edit before it
         for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE"
                       " kind='validation_run' AND summary LIKE ?", (f"%{ref}%",)):
             rows[r[0]] = r
+        if inc:
+            for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE wf=? AND"
+                          " minute BETWEEN ? AND ? AND kind IN ('validation_run','supervisor_edit')",
+                          (inc[0], inc[1] - 60, inc[1])):
+                rows[r[0]] = r
     wf = db.q1(f"SELECT w.workflow_id FROM decisions d LEFT JOIN workflows w ON w.wf=d.wf WHERE d.{col}=? LIMIT 1",
                (ref,))[0]
     out = [f"# {label} {ref} · {wf}", ""]

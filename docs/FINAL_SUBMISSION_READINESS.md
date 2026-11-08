@@ -16,11 +16,18 @@
 
 ## Verified evidence (current)
 
-`evidence/RESULTS.md` (generated): public_01 +15.3 % / 0 harmful; public_02 +25.7 % / 1 harmful of 29 / MTTR 135 min
-(detection 15 min, rest approver latency); robustness 16/16; 0 false winners on the null scenario; crash recovery PASS;
+`reports/EVALUATION.md` (fresh runs on the final code `b99b660`, via `scripts/evaluate.py`): tests 253 passed; public_01
++15.3 % / 0 harmful; public_02 +25.3 % / 2 harmful of 27 / MTTR 105 min (detection 15 min, rest approver latency);
+both stores `verify` 11/11 VALID. `evidence/RESULTS.md`: robustness 16/16; 0 false winners on the null scenario; crash recovery PASS;
 peak memory 360 MB; 49 s per simulated day at 1× in the grader-sized container; ≈ 460 s *projected* at 10×.
 
 ## Outstanding work
+
+- Re-run the robustness suite and crash recovery on the final code. The committed `reports/robustness.md` is from
+  `6ee64e0` and `reports/crash_recovery.md` from `1c12251` — both before the determinism fix (`b99b660`), which changes
+  the order of simulator draws but no decision rule. The re-run was started and stopped by the host running low on
+  memory; run `MAX_PARALLEL=2 SEED_REPLICAS=2 scripts/robustness.sh` and `scripts/crash_recovery.sh` when the machine
+  is free.
 
 - Walkthrough video with real VS Code and GitHub footage: needs the desktop (see `video/RECORDING_INSTRUCTIONS.md`).
 - Voiceover: recorded by the author.
