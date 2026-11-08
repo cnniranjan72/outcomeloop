@@ -228,6 +228,129 @@ def decision(db: DB, decision_id: int, evidence_lines: int = 60) -> str:
     return "\n".join(out)
 
 
+def _pct(x):
+    return "n/a" if x is None else f"{x:+.1%}"
+
+
+def _life_line(kind: str, summ: str, ev: dict) -> list[str]:
+    """One lifecycle event: a headline plus the statistics that decided it (from the decision's own evidence)."""
+    out = []
+    if kind == "experiment_designed":
+        out.append(f"design {ev.get('design')}; planned n {ev.get('n_plan_per_arm')} connected per challenger;"
+                   f" baseline engagement {ev.get('p_base')}; detects {ev.get('achieved_mde_rel', 0):.1%} relative lift")
+    elif kind in ("experiment_look", "experiment_winner", "experiment_no_winner", "experiment_extended",
+                  "experiment_drop_arm"):
+        inc = ev.get("incumbent") or {}
+        arms = ev.get("arms") or {}
+        head = f"look t={ev.get('t')} (alpha this look {ev.get('alpha_look', '-')})"
+        if inc.get("option"):
+            head += f"; {inc['option']} (incumbent) {inc.get('eng_rate')} on {inc.get('connected')} connected"
+        out.append(head)
+        for o, a in sorted(arms.items()):
+            out.append(f"{o}: {_pct(a.get('lift_rel'))} engagement (z {a.get('z')}, p {a.get('p')}, n {a.get('connected')})"
+                       f"; pickup diff {a.get('pickup_diff')} (z {a.get('pickup_z')})")
+        if kind == "experiment_winner":
+            st = (ev.get("stability") or {}).get(ev.get("winner") or "", {})
+            it = (ev.get("interaction") or {}).get(ev.get("winner") or "", {})
+            out.append(f"significant after Holm: {ev.get('significant')}; guardrail blocked: {ev.get('guardrail_blocked')}"
+                       + (f"; recent-window lift {_pct(st.get('recent_lift'))} (z vs overall {st.get('z_vs_overall')})"
+                          if st else "")
+                       + (f"; alongside {it.get('stratum')}: {_pct(it.get('lift_in_stratum'))}"
+                          f" ({'blocked' if it.get('blocked') else 'ok'})" if it else ""))
+            ch = ev.get("cohort_check") or {}
+            if ch:
+                out.append("per-cohort: " + ", ".join(f"{c} {_pct(v.get('lift_rel'))}" for c, v in sorted(ch.items())))
+    elif kind in ("decay_check", "decay_detected"):
+        for sc, r in (ev.get("scopes") or {}).items():
+            if "lift_now" in r:
+                out.append(f"{sc}: lift now {r['lift_now']:+.3f} (z {r['z_now']}) vs promotion {r['lift_at_promotion']:+.3f}"
+                           f" (80% LCB {r['promotion_lcb80']:+.3f}, z vs it {r['z_vs_promotion']}); holdout"
+                           f" {r['holdout_connected']} / winner {r['winner_connected']} connected over"
+                           f" {ev.get('window_hours')} h; smallest detectable drop {r.get('detectable_drop_vs_promotion')}")
+            else:
+                out.append(f"{sc}: holdout too thin ({r.get('holdout_connected')} connected)")
+    elif kind == "post_apply_verification" and "pickup" in ev:
+        out.append(f"24 h before → after: pickup {ev['pickup']['before']} → {ev['pickup']['after']} (z {ev['pickup']['z']}),"
+                   f" engagement {ev['engagement']['before']} → {ev['engagement']['after']} (z {ev['engagement']['z']});"
+                   f" guardrail {ev.get('guardrail')} margin {ev.get('margin')}: "
+                   + ("BREACH" if ev.get("guardrail_breach") else
+                      "not attributable" if ev.get("pickup_drop_not_attributable") else "ok"))
+    elif kind in ("incident_opened", "incident_fix_selected"):
+        v = ev.get("validation") or {}
+        if ev.get("trigger") == "validation_probe" or v:
+            out.append(f"trigger {ev.get('trigger')}: {v.get('prompt_version')} failed {v.get('failures')} of {v.get('n')}"
+                       f" synthetic calls (pass {v.get('pass_rate')}; 95% failure bound {ev.get('failure_ucb95')} vs limit"
+                       f" {round(1 - ev.get('threshold', 0.97), 4)})")
+        det = ev.get("detector") or {}
+        if det:
+            out.append(f"trigger flag_rate: {det.get('flag_rate')} vs reference {det.get('ref_rate')} (z {det.get('z')})"
+                       f" on {det.get('connected')} connected calls")
+        if kind == "incident_fix_selected":
+            out.append(f"fix {ev.get('fix_prompt')} from {ev.get('fix_source')}")
+    elif kind == "incident_verified":
+        out.append(f"after the fix: flag rate {ev.get('flag_rate')} vs reference {ev.get('ref_rate')} on {ev.get('connected')}"
+                   f" connected (detector fired: {ev.get('fired')})")
+    elif kind == "proposal_submitted":
+        out.append(f"impact score {ev.get('impact_score')}; affected leads {ev.get('affected_leads')}")
+    elif kind == "proposal_approved":
+        out.append(f"approval {ev.get('approval_id')} decided {ev.get('decided_at')} (requested {ev.get('created_at')})")
+    elif kind == "proposal_applied":
+        out.append(f"live as config v{ev.get('version')}")
+    return out
+
+
+def lifecycle(db: DB, ref: str) -> str:
+    """The whole life of one experiment (exp-...), incident (inc-...) or proposal (ol-...), from our own store: what
+    triggered it, the design, every statistical look, the winner's checks, the proposal, approval and apply, the
+    verification afterwards, and decay checks or rollback. Every line is a decision row with its id."""
+    if ref.startswith("exp-"):
+        col, label = "experiment_id", "experiment"
+    elif ref.startswith("inc-"):
+        col, label = "incident_id", "incident"
+    else:
+        col, label = "proposal_id", "proposal"
+    rows = {r[0]: r for r in db.q(f"SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions"
+                                  f" WHERE {col}=?", (ref,))}
+    if not rows:
+        return f"no {label} {ref} in the audit store"
+    pids = {r[5] for r in rows.values() if r[5]} | ({ref} if col == "proposal_id" else set())
+    if col != "proposal_id":   # proposals that carried this experiment or incident (recorded in their evidence)
+        pids |= {p for (p,) in db.q("SELECT proposal_id FROM proposals WHERE body LIKE ?", (f'%"{ref}"%',))}
+    for p in pids:
+        for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE proposal_id=?",
+                      (p,)):
+            rows[r[0]] = r
+    if col == "incident_id":   # the paid validation runs that served this incident (their purpose names it)
+        for r in db.q("SELECT decision_id, minute, kind, summary, evidence, proposal_id FROM decisions WHERE"
+                      " kind='validation_run' AND summary LIKE ?", (f"%{ref}%",)):
+            rows[r[0]] = r
+    wf = db.q1(f"SELECT w.workflow_id FROM decisions d LEFT JOIN workflows w ON w.wf=d.wf WHERE d.{col}=? LIMIT 1",
+               (ref,))[0]
+    out = [f"# {label} {ref} · {wf}", ""]
+    if label == "experiment":
+        e = db.q1("SELECT status, data FROM experiments WHERE experiment_id=?", (ref,))
+        if e:
+            d = json.loads(e[1])
+            out += [f"{d.get('dim')}: arms {d.get('arms')}, incumbent {d.get('incumbent')}, status {e[0]},"
+                    f" winner {d.get('winner')}, alpha spent {d.get('alpha_spent', 0):.4f} of the family budget", ""]
+    if label == "incident":
+        i = db.q1("SELECT type, state, opened_minute, closed_minute FROM incidents WHERE incident_id=?", (ref,))
+        if i:
+            out += [f"{i[0]} incident, {i[1]}; opened {minute_to_label(i[2])}"
+                    + (f", closed {minute_to_label(i[3])}" if i[3] is not None else ""), ""]
+    for did in sorted(rows):
+        _, m, kind, summ, ev, pid = rows[did]
+        try:
+            evd = json.loads(ev) if ev else {}
+        except ValueError:
+            evd = {}
+        out.append(f"#{did:<5} {minute_to_label(m)}  {kind:24s} {_fmt_ev(summ, 120)}")
+        for ln in _life_line(kind, summ, evd if isinstance(evd, dict) else {}):
+            out.append(f"{'':16}↳ {ln}")
+    out += ["", f"Proposals involved: {', '.join(sorted(pids)) or 'none'}. Drill into any row: decision <id>."]
+    return "\n".join(out)
+
+
 def _n(v):
     """Metric for display: whole numbers without a trailing .0, others to one decimal; missing as '-'."""
     return "-" if v is None else (f"{v:,.0f}" if abs(v - round(v)) < 0.05 else f"{v:,.1f}")
@@ -366,10 +489,12 @@ def serve(db_path: str, port: int):
                     body = why(db, parts[1], q.get("at", ["D0 00:00"])[0])
                 elif len(parts) == 2 and parts[0] == "decision" and parts[1].isdigit():
                     body = decision(db, int(parts[1]), 10_000 if "full" in q else 60)
+                elif len(parts) == 2 and parts[0] == "lifecycle":
+                    body = lifecycle(db, parts[1])
                 elif len(parts) == 2 and parts[0] == "customer":
                     body = customer(db, parts[1], int(q["day"][0]) if "day" in q else None)
                 else:
-                    body, code = "routes: /status /alerts /supervisor/<wf> /why/<wf>?at=D3%2014:00 /decision/<id> /customer/<person>", 404
+                    body, code = "routes: /status /alerts /supervisor/<wf> /why/<wf>?at=D3%2014:00 /decision/<id> /lifecycle/<exp|inc|proposal id> /customer/<person>", 404
                     self._send(code, body)
                     return
                 self._send(200, body)

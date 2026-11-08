@@ -91,3 +91,24 @@ def test_decision_view_shows_reasoning_evidence_links_and_neighbours(db):
     assert "supervisor_edit" in out.split("After:")[0] and "incident_fix_selected" in out.split("After:")[1]
     assert views.decision(db, 99999) == "no decision #99999"
     assert f"#{did}" in views.audit(db, "wfD", "incident_*", 10)
+
+
+def test_lifecycle_links_experiment_decisions_and_the_proposals_that_carried_it(db):
+    import json as _j
+    db.x("INSERT INTO workflows (wf, workflow_id) VALUES (8, 'wfL')")
+    db.x("INSERT INTO experiments VALUES ('exp-8-voice-0', 8, 'voice', 'promoted', ?, 0, 900)",
+         (_j.dumps({"dim": "voice", "arms": ["V1", "V2"], "incumbent": "V1", "winner": "V2", "alpha_spent": 0.02}),))
+    db.decide(0, 8, "experiment_designed", "voice: test", experiment_id="exp-8-voice-0",
+              evidence={"design": {"V1": 0.6, "V2": 0.4}, "n_plan_per_arm": 900, "p_base": 0.5, "achieved_mde_rel": 0.1})
+    db.decide(600, 8, "experiment_winner", "voice: winner V2", experiment_id="exp-8-voice-0",
+              evidence={"t": 0.8, "alpha_look": 0.02, "winner": "V2", "significant": ["V2"], "guardrail_blocked": [],
+                        "incumbent": {"option": "V1", "eng_rate": 0.5, "connected": 2000},
+                        "arms": {"V2": {"lift_rel": 0.12, "z": 3.1, "p": 0.001, "connected": 900}}})
+    db.x("INSERT INTO proposals (proposal_id, wf, route, state, kind, base_version, body, created_minute, updated_minute)"
+         " VALUES ('ol-8-1', 8, 'approval', 'APPLIED', 'routine', 3, ?, 600, 700)",
+         (_j.dumps({"evidence": {"experiments": {"exp-8-voice-0": {}}}}),))
+    db.decide(700, 8, "proposal_applied", "ol-8-1: applied", proposal_id="ol-8-1", evidence={"version": 4})
+    out = views.lifecycle(db, "exp-8-voice-0")
+    assert "planned n 900" in out and "V2: +12.0% engagement (z 3.1" in out and "significant after Holm: ['V2']" in out
+    assert "live as config v4" in out and "ol-8-1" in out
+    assert views.lifecycle(db, "exp-nope").startswith("no experiment")

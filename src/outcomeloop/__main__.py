@@ -43,6 +43,8 @@ def main(argv=None):
     de = sub.add_parser("decision", help="one decision in full: why, evidence, links, before/after")
     de.add_argument("decision_id", type=int)
     de.add_argument("--full", action="store_true", help="print the whole evidence JSON")
+    lc = sub.add_parser("lifecycle", help="whole life of an experiment (exp-..), incident (inc-..) or proposal (ol-..)")
+    lc.add_argument("ref")
     cu = sub.add_parser("customer")
     cu.add_argument("person_id")
     cu.add_argument("--day", type=int)
@@ -80,6 +82,8 @@ def main(argv=None):
         print(views.audit(db, a.wf, a.kind, a.limit))
     elif a.cmd == "decision":
         print(views.decision(db, a.decision_id, 10_000 if a.full else 60))
+    elif a.cmd == "lifecycle":
+        print(views.lifecycle(db, a.ref))
     elif a.cmd == "customer":
         print(views.customer(db, a.person_id, a.day))
 
