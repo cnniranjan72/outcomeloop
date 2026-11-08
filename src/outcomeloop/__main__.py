@@ -45,6 +45,9 @@ def main(argv=None):
     de.add_argument("--full", action="store_true", help="print the whole evidence JSON")
     lc = sub.add_parser("lifecycle", help="whole life of an experiment (exp-..), incident (inc-..) or proposal (ol-..)")
     lc.add_argument("ref")
+    sub.add_parser("verify", help="integrity checks over the audit store; exit 0 valid, 2 incomplete, 1 invalid")
+    rp = sub.add_parser("replay", help="read-only reconstruction of a decision, recomputed from raw rows where possible")
+    rp.add_argument("decision_id", type=int)
     cu = sub.add_parser("customer")
     cu.add_argument("person_id")
     cu.add_argument("--day", type=int)
@@ -84,6 +87,14 @@ def main(argv=None):
         print(views.decision(db, a.decision_id, 10_000 if a.full else 60))
     elif a.cmd == "lifecycle":
         print(views.lifecycle(db, a.ref))
+    elif a.cmd == "verify":
+        from .verify import render_verify, verify_store
+        text, code = render_verify(verify_store(db))
+        print(text)
+        raise SystemExit(code)
+    elif a.cmd == "replay":
+        from .verify import replay
+        print(replay(db, a.decision_id))
     elif a.cmd == "customer":
         print(views.customer(db, a.person_id, a.day))
 
