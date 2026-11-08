@@ -24,6 +24,9 @@ marked *projected*; every measurement names its source.
 | 14 | Per-line `json.loads` overhead on the ingest hot path | 10× headroom | Batched parsing (2,000 lines per call) | +3 % ingest, 3 alternating pairs (`reports/scaling.md`) | `e624d4c` |
 | 15 | A second controller on the same state was retried 20× by run.sh | Operational noise; a human must look | Exit code 3, run.sh stops | `test_second_instance_*`; #39 | `e624d4c` |
 | 16 | No reviewer entry point | 20-minute review | `evidence/` package generated from final stores; README pointer | `evidence/README.md`, `evidence/RESULTS.md` | `331ed91`, `08d690f` |
+| 17 | `decision <id>` showed raw JSON; "why W3 and not W2?" needed arithmetic | The live review question | Key numbers first; each look shows the Holm step-down (every p against its threshold) | `decision 133` (public_01): W3 0.0047 ≤ 0.0094 ✓, W2 0.0253 > 0.0187 ✗ | `d74a5ba` |
+| 18 | The prior-evidence screen was unit-tested but its controller wiring was not | A regression in the wiring would silently re-enable the harmful re-test | Controller-level test of the public_02 situation (skip, cooldown, other dimension still designed) | `test_step_experiments_skips_a_retest_of_a_supervisor_choice_*` | `738f4da` |
+| 19 | No map from claims to code | A reviewer verifying a claim had to search | Code map in `evidence/README.md` (subsystem → file · function → what to look for) | names verified against the source | `5158064` |
 
 ## Investigated, not done (and why)
 
@@ -36,6 +39,8 @@ marked *projected*; every measurement names its source.
 | Cache the config GET per workflow-hour | ~1 % of decide time; risk of acting on a stale config; the base-version check already guards applies |
 | Wire sharding into run.sh | Needs a clock coordinator (one `/sim/advance`) and a shared credit ledger; risky in the final days for headroom we do not need at 1× |
 | Weight fair shares by tenant tier | No tier information in the API |
+| Sample-ratio-mismatch (SRM) check on experiments | Principled, but expected shares change legitimately inside a test (arms dropped back to the incumbent, cohort-level overrides, campaign-locked allocations on `next_campaign_only`); a correct check needs per-version expected shares, which the store does not keep. A naive chi-square would block real winners. Arms are analysed only on calls that ran under the experiment's own versions, which is the contamination guard we rely on |
+| Practical-significance floor on winners | Tests are sized for a ~10 % MDE, so a significant result is already a sizeable lift; an extra floor would only bite after the single extension and has no evidence behind a particular value |
 
 ## Remaining risks (honest)
 
