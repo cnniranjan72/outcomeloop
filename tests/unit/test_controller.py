@@ -343,3 +343,30 @@ def test_pickup_drop_after_a_voice_change_is_recorded_but_not_paged(ctl, db):
     v = db.q1("SELECT summary, evidence FROM decisions WHERE kind='post_apply_verification'")
     assert "not attributable" in v[0] and "pickup_drop_not_attributable" in v[1]
     assert db.q1("SELECT COUNT(*) FROM decisions WHERE kind='alert'")[0] == 0
+
+
+def test_step_experiments_skips_a_retest_of_a_supervisor_choice_with_nothing_to_learn(ctl, db):
+    # public_02, wired end to end: the supervisor set voice=V2; our aborted test two days ago measured V1 and V2
+    # within noise. The voice test is skipped (audited, cooldown); welcome (no prior evidence) is still designed.
+    import json as _j
+    from helpers import add_calls
+    from outcomeloop.experiments import Experiment
+    now = 5 * 1440 + 12 * 60
+    cfg = _with(CFG, "voice", {"V2": 1.0})
+    add_calls(db, ctl.wf, 6000, 2000, 1100, minute=now - 3 * 1440, spread=3 * 1440, voice="V2")
+    look = {"incumbent": {"option": "V1", "connected": 2900, "engaged": 1595},
+            "arms": {"V2": {"connected": 648, "engaged": 358}}}
+    with db.tx():
+        db.kv_set(f"supervisor_dims:{ctl.wf}", ["voice"])
+        db.x("INSERT INTO experiments VALUES (?,?,?,?,?,?,?)", ("exp-prior-voice", ctl.wf, "voice", "aborted",
+             _j.dumps({"looks": [look], "arms": ["V1", "V2"]}), now - 7 * 1440, now - 2 * 1440))
+    ctl.step_experiments(ctl.wf, ctl.specs[ctl.wf], cfg, now, ctx())
+    skipped = decisions(db, "experiment_skipped")
+    assert len(skipped) == 1 and skipped[0].startswith("voice: no challenger worth testing against V2")
+    assert db.kv_get(f"skip_until:{ctl.wf}:voice") > now
+    active = Experiment.load_active(db, ctl.wf)
+    assert "voice" not in active and "welcome_message" in active
+    ev = _j.loads(db.q1("SELECT evidence FROM decisions WHERE kind='experiment_skipped'")[0])
+    assert ev["strict"] is True and ev["challengers"]["V1"]["kept"] is False
+    ctl.step_experiments(ctl.wf, ctl.specs[ctl.wf], cfg, now + 60, ctx())       # cooldown: not re-evaluated hourly
+    assert len(decisions(db, "experiment_skipped")) == 1
