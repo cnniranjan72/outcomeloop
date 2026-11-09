@@ -501,7 +501,7 @@ def alerts(db: DB) -> tuple[str, list[dict]]:
                                         " WHERE state IN ('open','fix_ready')"):
         if now - opened > 240:
             page("incident_stuck", f"{iid} open for {now - opened} sim-minutes in state {state}",
-                 f"python -m outcomeloop audit --kind incident_no_fix; credits; approver hours")
+                 "python -m outcomeloop audit --kind incident_no_fix; credits; approver hours")
     out = [f"# paging rules at {minute_to_label(now)}: {len(fire)} firing"]
     out += [f"PAGE {a['rule']}: {a['message']}  → look at: {a['look_at']}" for a in fire] or ["all clear"]
     return "\n".join(out), fire

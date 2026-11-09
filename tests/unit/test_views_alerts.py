@@ -114,3 +114,21 @@ def test_lifecycle_links_experiment_decisions_and_the_proposals_that_carried_it(
     assert "Holm (80% of this look's alpha, step-down): V2 p 0.001 ≤ 0.016 ✓" in out
     assert "Key numbers:" in views.decision(db, db.q1("SELECT decision_id FROM decisions WHERE kind='experiment_winner'")[0])
     assert views.lifecycle(db, "exp-nope").startswith("no experiment")
+
+
+def test_cli_output_survives_a_non_utf8_pipe(db, tmp_path, monkeypatch):
+    # piped / redirected output on Windows uses the ANSI code page (cp1252), which cannot encode the views' arrows;
+    # the read commands must still print (live review: `... | Select-String`, `> file.txt`)
+    import io
+    import sys
+    from outcomeloop.__main__ import main
+    wf = db.code("wf", "nw_renewal")
+    with db.tx():
+        db.x("INSERT INTO workflows VALUES (?,?,?,?)", (wf, "nw_renewal", "northwind_life", "{}"))
+        db.decide(600, wf, "post_apply_verification", "pickup 0.294→0.292 · engagement ok")
+    db.close()
+    buf = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(buf, encoding="cp1252"))
+    main(["--db", str(tmp_path / "t.db"), "audit", "--wf", "nw_renewal"])
+    sys.stdout.flush()
+    assert "pickup 0.294" in buf.getvalue().decode("utf-8", errors="replace")

@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field
 from .cohorts import Cohort, membership_sql
 from .config import Settings
 from .db import DB, dumps
-from .stats import Prop, achieved_mde, compare, holm, look_alpha, obf_spent, sample_size_per_arm, z_of
+from .stats import Prop, achieved_mde, compare, holm, look_alpha, sample_size_per_arm, z_of
 from .timeutil import minute_to_label
 
 log = logging.getLogger("outcomeloop.exp")

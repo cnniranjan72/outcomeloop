@@ -21,6 +21,13 @@ from .config import Settings
 
 
 def main(argv=None):
+    # The views print arrows and middots. A pipe or redirect on Windows defaults to the ANSI code page, which cannot
+    # encode them and would crash a read command mid-output; always write UTF-8 (unencodable text is replaced).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(prog="outcomeloop")
     ap.add_argument("--db", default=os.environ.get("OUTCOMELOOP_DB", "state/outcomeloop.db"))
     sub = ap.add_subparsers(dest="cmd", required=True)

@@ -20,10 +20,9 @@ budget, so it stays off there. The map is refreshed at most once per simulated d
 from __future__ import annotations
 
 import hashlib
-import json
 
 from .config import Settings
-from .db import DB, dumps
+from .db import DB
 from .stats import Prop, compare
 
 SQL = """CREATE TABLE IF NOT EXISTS ptime_members (wf INTEGER, person INTEGER, arm TEXT, hour INTEGER,
