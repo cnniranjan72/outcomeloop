@@ -5,6 +5,7 @@
 
 > Repository map: controller in `src/outcomeloop/`, entry point `./run.sh <SIM_URL>`, grade reports and load /
 > crash evidence in `reports/`, design detail in `docs/DESIGN_DECISIONS.md`, runbook in `docs/OPERATIONS.md`.
+> Walkthrough video (4:44, narrated, real repository / VS Code / terminal footage): `walkthrough.mp4`.
 >
 > **Ten-minute read:** §0 TL;DR, §2 what was built and cut, the replies at the end of each memo in §3, §11 results,
 > §13 known weaknesses. The rest is the reasoning behind them.
