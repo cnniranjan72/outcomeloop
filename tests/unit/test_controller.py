@@ -110,6 +110,46 @@ def test_one_open_proposal_batches_later_wants(ctl):
     assert ctl.sim.calls["request_approval"] == 1                # waits for the open one
 
 
+def _rejected(ctl, minutes_ago):
+    with ctl.db.tx():
+        ctl.db.x("INSERT INTO proposals (proposal_id, wf, route, state, kind, base_version, body, approval, created_minute,"
+                 " updated_minute) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 ("ol-rej", ctl.wf, "approval", "REJECTED", "routine", 1, "{}",
+                  dumps({"status": "rejected", "reasons": ["approver declined (judgement call)"]}),
+                  ctl.now - 120, ctl.now - minutes_ago))
+
+
+def test_urgent_request_inside_rejection_cooldown_says_it_is_a_re_request(ctl):
+    # an urgent request skips the cool-down after a rejection; the override must be explicit to the approver (rationale)
+    # and in our audit store (decision summary + evidence), never silent
+    import json
+    spec = ctl.specs[ctl.wf]
+    _rejected(ctl, minutes_ago=30)
+    ctl.route(ctl.wf, spec, ctl.sim.config(WID), _with(CFG, "voice", {"V1": 0.6, "V2": 0.4}), ctx(urgent=True,
+              components=voice_ctx()["components"]))
+    assert ctl.sim.calls["request_approval"] == 1
+    body = json.loads(ctl.db.q1("SELECT body FROM proposals WHERE state='PENDING'")[0])
+    assert body["rationale"].startswith("Re-request: ol-rej was rejected at")
+    ar = body["evidence"]["after_rejection"]
+    assert ar["rejected_proposal_id"] == "ol-rej" and ar["rejection_reasons"] == ["approver declined (judgement call)"]
+    assert "holdout" in ar["why_urgent"]
+    sub = decisions(ctl.db, "proposal_submitted")
+    assert len(sub) == 1 and "re-request after ol-rej was rejected" in sub[0]
+
+
+def test_routine_request_respects_rejection_cooldown_and_old_rejection_is_not_mentioned(ctl):
+    import json
+    spec = ctl.specs[ctl.wf]
+    _rejected(ctl, minutes_ago=30)
+    ctl.route(ctl.wf, spec, ctl.sim.config(WID), _with(CFG, "voice", {"V1": 0.6, "V2": 0.4}), voice_ctx())
+    assert ctl.sim.calls["request_approval"] == 0 and "cool-down" in decisions(ctl.db, "hold")[0]
+    ctl.now += 5 * 60                                        # past the 4 h cool-down
+    ctl.route(ctl.wf, spec, ctl.sim.config(WID), _with(CFG, "voice", {"V1": 0.6, "V2": 0.4}), ctx(urgent=True,
+              components=voice_ctx()["components"]))
+    body = json.loads(ctl.db.q1("SELECT body FROM proposals WHERE state='PENDING'")[0])
+    assert "after_rejection" not in body["evidence"] and not body["rationale"].startswith("Re-request")
+
+
 def test_auto_apply_not_sent_while_approval_pending(ctl):
     spec = ctl.specs[ctl.wf]
     ctl.route(ctl.wf, spec, ctl.sim.config(WID), _with(CFG, "voice", {"V1": 0.6, "V2": 0.4}), voice_ctx())

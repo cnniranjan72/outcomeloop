@@ -11,11 +11,10 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import time
 from pathlib import Path
 
-from .cohorts import Cohort, bootstrap_cohorts, load_cohorts, membership_sql, save_cohorts, schedule_weights
+from .cohorts import bootstrap_cohorts, load_cohorts, membership_sql, save_cohorts, schedule_weights
 from .config import Settings
 from .db import DB, dumps
 from .detectors import (did_health, did_own_past, halluc_baseline, halluc_spike, incident_interaction,
@@ -63,11 +62,6 @@ CHANGE_DIMS = ("cohorts", "welcome_message", "voice", "caller_id", "prompt_versi
 # ------------------------------------------------------------------------------------------ config algebra
 def _dist(cfg: dict, cohort: str, dim: str) -> dict:
     return (cfg["allocations"].get(cohort) or {}).get(dim) or cfg["allocations"]["default"][dim]
-
-
-def _norm(d: dict) -> dict:
-    z = sum(d.values()) or 1.0
-    return {k: v / z for k, v in d.items() if v > 0}
 
 
 def changed_dims(old: dict, new: dict) -> list[str]:
@@ -1303,7 +1297,6 @@ class Controller:
             return
         pol = spec["governance"]["auto_apply"]
         comps = ctx.get("components", {})
-        wid = spec["workflow_id"]
         open_p = self.gov.open_proposal(wf)
         prompt_fix = "prompt_version" in dims
         did_urgent = bool(comps.get("caller_id", {}).get("urgent"))
@@ -1347,8 +1340,13 @@ class Controller:
             ok, why = self.gov.submit_window(spec, now, emergency=emergency)
             ok2, why2 = self.gov.can_request(wf, spec, now, emergency=emergency)
             if ok and ok2:
+                why_urgent = None
+                if emergency:
+                    why_urgent = ("a caller ID it dials from is degraded" if did_urgent else
+                                  "the promoted option stopped beating its holdout, so this restores the configuration"
+                                  " approved before it")
                 self._submit(wf, spec, cur, desired, comps, "routine" if not emergency else "urgent",
-                             emergency=emergency)
+                             emergency=emergency, why_urgent=why_urgent)
                 return
             self._hold(wf, f"{approval_dims} waiting: {why if not ok else why2}")
         # 4) operational changes we may auto-apply now (only when nothing is pending, so we don't stale it)
@@ -1401,7 +1399,6 @@ class Controller:
                     break
             ramp = {"target": b, "fraction": round(frac, 3)}
             shift = max_shift(cfg, step)
-        comps = {}
         body = {"proposal_id": self.gov.new_id(spec["workflow_id"], self.now), "base_version": cur["version"],
                 "proposed_config": canonical_config(cfg, step),
                 "rationale": self._rationale(wf, cfg, step, urgent),
@@ -1443,8 +1440,20 @@ class Controller:
         return " ".join(parts) or "operational adjustment"
 
     # ---- proposal assembly (C10)
-    def _submit(self, wf, spec, cur, desired, comps, kind, emergency):
+    def _submit(self, wf, spec, cur, desired, comps, kind, emergency, why_urgent=None):
         db, now = self.db, self.now
+        # An urgent request skips the cool-down after a rejection (Governance.can_request). When it does, say so: the
+        # approver sees that this is a re-request and why, and the audit store records the override explicitly.
+        after_rejection = None
+        if emergency:
+            r = db.q1("SELECT proposal_id, updated_minute, approval FROM proposals WHERE wf=? AND state='REJECTED' AND"
+                      " updated_minute > ? ORDER BY updated_minute DESC LIMIT 1",
+                      (wf, now - self.s.reject_cooldown_hours * 60))
+            if r:
+                reasons = (json.loads(r[2]) if r[2] else {}).get("reasons")
+                after_rejection = {"rejected_proposal_id": r[0], "rejected_at": minute_to_label(r[1]),
+                                   "rejection_reasons": reasons, "cooldown_hours": self.s.reject_cooldown_hours,
+                                   "why_urgent": why_urgent or "emergency"}
         cfg = cur["config"]
         dims = changed_dims(cfg, desired)
         diff = {}
@@ -1480,12 +1489,21 @@ class Controller:
         if "prompt_version" in dims:
             body["evidence"]["validation_run_id"] = comps["prompt_version"]["validation"]["validation_run_id"]
             body["evidence"]["incident_id"] = comps["prompt_version"]["incident_id"]
+        if after_rejection:
+            body["evidence"]["after_rejection"] = after_rejection
+            body["rationale"] = (f"Re-request: {after_rejection['rejected_proposal_id']} was rejected at "
+                                 f"{after_rejection['rejected_at']}; sent again within the {self.s.reject_cooldown_hours:g} h"
+                                 f" cool-down because {after_rejection['why_urgent']}. " + body["rationale"])
         state, resp = self.gov.submit(wf, spec["workflow_id"], kind, body, now)
         with db.tx():
-            db.decide(now, wf, "proposal_submitted", f"{body['proposal_id']} -> {state}: {body['change_summary']}",
+            db.decide(now, wf, "proposal_submitted", f"{body['proposal_id']} -> {state}: {body['change_summary']}"
+                      + (f" (re-request after {after_rejection['rejected_proposal_id']} was rejected)" if after_rejection
+                         else ""),
                       reasoning=body["rationale"], evidence={"diff": diff, "affected_leads": affected,
                                                              "impact_score": body["impact_score"],
-                                                             "impact_detail": impact_detail, "dry_run": dry},
+                                                             "impact_detail": impact_detail, "dry_run": dry,
+                                                             **({"after_rejection": after_rejection}
+                                                                if after_rejection else {})},
                       proposal_id=body["proposal_id"], approval_id=(resp or {}).get("approval_id"), outcome=state,
                       incident_id=body["evidence"].get("incident_id"))
             if "prompt_version" in dims and state == "PENDING":
