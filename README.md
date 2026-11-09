@@ -38,6 +38,17 @@ Other documents:
 - `docs/OPERATIONS.md`: the on-call runbook.
 - `docs/WALKTHROUGH.md`: ten commands that rebuild one real decision from the audit store.
 
+### Quick start
+
+```bash
+pip install -r requirements.txt
+python -m sim serve --scenario scenarios/public_01_dev.yaml --run-dir runs/mine01 &   # the simulator, on :8700
+./run.sh http://127.0.0.1:8700                          # the controller; runs to the end of the scenario, no manual steps
+PYTHONPATH=src python -m outcomeloop status             # what it did, from its own store (state/outcomeloop.db)
+PYTHONPATH=src python -m outcomeloop why nw_renewal --at "D0 14:00"   # why a workflow changed, who approved, what next
+python scripts/evaluate.py                              # tests + public_01 + public_02 from fresh runs, verified
+```
+
 ---
 
 ## Contents

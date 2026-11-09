@@ -203,11 +203,12 @@
 
   > Kabir, no new stateful infrastructure: state is one SQLite file embedded in the process (WAL, fsync on
   > commit). It maps onto your existing Postgres for production, and Redis isn't needed. The kill/restart
-  > evidence is in the repo: random kills mid-ingest and mid-approval, resume, no double-apply, no lost
-  > approvals. Idempotency comes from transactional checkpoints and proposal IDs persisted before any call.
+  > evidence is in the repo: nine hard kills at chosen moments (mid-ingest, with an approval pending, approved but
+  > not applied, with a paid validation in flight, with a governance write in flight), each followed by a resume,
+  > no double-apply and no lost approval. Idempotency comes from transactional checkpoints and proposal IDs persisted before any call.
   > Pages fire only for stalled ingest, credits near the incident reserve, an approval about to lapse, or a
-  > crash loop. KPI drift waits for morning. Load numbers and the 10× breakpoint:
-  > [MEASURED: see reports/public_03.md].
+  > crash loop. KPI drift waits for morning. On load: [SCALE_REPLY]. At 10× the first thing to go is ingest on
+  > one core; the fix is sharding workflows across processes, which I prototyped and measured.
 
 ### 04 — Anita Desai, Operations Supervisor, Kestrel Finance
 
@@ -311,7 +312,7 @@
     - Validation runs at n = 300 (3 credits).
     - An LLM never chooses a winner.
     - 40 % of credits is an incident reserve. `[RESULT: credits used on public_01/02]`
-  - *Scale.* Transactional, idempotent chunk ingestion. `[MEASURED: see reports/public_03.md]` We state what
+  - *Scale.* Transactional, idempotent chunk ingestion; [SCALE_REPLY] (`reports/scaling.md`). We state what
     breaks first at 10× and how we'd partition by tenant and workflow.
   - *Choosing.* Per-person call time ships as an experiment rather than a rollout; the cuts in §2 each have a
     drafted message.
@@ -333,6 +334,6 @@
   > caller-ID health, hallucination response, and a full audit trail. Per-person call time runs as an experiment, and the cuts
   > are listed with reasons and drafted messages to the people affected. Every change on a client agent can be
   > explained from our own store in one command. Credits go first to known-good fixes, and 40 % is reserved for
-  > incidents. On scale: [MEASURED: see reports/public_03.md]. The first bottleneck at 10× isn't compute but
+  > incidents. On scale: [SCALE_REPLY]. The first bottleneck at 10× isn't compute but
   > approver capacity at 2–4 requests per workflow per day. I've designed around that with batching. Three
   > memos contained claims the policies contradict; I followed the policies.

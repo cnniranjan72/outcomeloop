@@ -158,11 +158,27 @@ unsafe prompt is reverted **only via an approval request that says so**, with va
 6. **Dry runs ignore lead-pool depletion** for schedule changes (stated as an upper bound).
 7. **Credit-spending calls have no idempotency key.** A crash between sending a validation run and recording
    its result can spend credits twice (bounded: ≤ 3 credits per crash). The ledger marks such rows `sent`.
-8. **Single process, single SQLite writer.** Fine at public_03 scale (§8); at 10× it is the first thing to
-   change.
+8. **Single process.** Fine at public_03 scale (§8). At 10× ingest CPU on one core is the first limit, then
+   decisions running serially across workflows; the SQLite writer comes after both (`reports/scaling.md`).
 9. **Named approver.** The approval API exposes no approver identity, so "who approved" is the approval id
    and timestamp.
 10. **Tenant preferences are a static JSON file.** In production they belong in the tenant's policy record.
+11. **Calls are treated as independent observations.** Retries dial the same person again, and calls of one person
+    are correlated, so the binomial standard errors behind every z-test are somewhat optimistic. Randomisation is
+    per dial, so the lift estimates stay unbiased; the correction is a person-clustered standard error (or the
+    first call per person only). Not done; the null-effects scenario (0 false winners in 12) is the empirical check.
+12. **A borderline-unsafe prompt can take a day to fix.** In our own scenarios with few credits or a strict policy
+    (`r2_strict_policy_s2`, `r5_low_credits`) a supervisor prompt whose validation pass rate sat near the threshold
+    took 23–27 h to fix: validation could neither show it safe nor show it unsafe quickly, and we do not revert a
+    supervisor's prompt without evidence. public_02's clear-cut case took 105 min.
+13. **An urgent request can follow a rejection inside the cool-down.** Moving off a degraded caller ID, or rolling
+    back a promoted option that stopped beating its holdout, is sent even within 4 h of a rejection (public_02:
+    the `nw_renewal` rollback was rejected at D5 16:10 and re-requested at 17:00). The request says it is a re-request
+    and why, and the audit store records the override (`evidence.after_rejection`). The simulator's rejections are
+    random judgement calls; with a real approver we would read the stated reason before asking again.
+14. **One state file per controller.** Two controllers started from one checkout at the same time share the default
+    `state/outcomeloop.db`; the second exits with code 3 by design rather than risk duplicate applies. Concurrent
+    runs need their own `OUTCOMELOOP_DB` each (sequential runs are detected and archived automatically).
 
 ## 14. If this went to production at Formi next month
 

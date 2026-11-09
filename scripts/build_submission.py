@@ -192,7 +192,13 @@ def main():
                     f"*< 10 min per simulated day on `public_03_load`.* Our share is {ctrl_day} per simulated day "
                     f"(`reports/public_03.md`).")
     sh = sh.replace("*Breaks at 10×.* `[MEASURED: see reports/public_03.md]`",
-                    "*Breaks at 10×.* Per-tick decision queries over raw rows first, then the single writer (§8).")
+                    "*Breaks at 10×.* Ingest CPU on one core first, then decisions running serially across workflows; "
+                    "sharding workflows across processes fixes both. The SQLite writer is not first (§8, `reports/scaling.md`).")
+    # one plain sentence for the replies people would actually receive: the grader-spec container figures
+    scale_reply = (f"one simulated day of public_03 takes {'–'.join(_c)} s of controller time in a 4 vCPU / 8 GB container"
+                   f" (the budget is 10 minutes), live ingest runs at {m2.group(1)} events/s and peak memory is {rss}"
+                   if m1 and m2 else f"one simulated day of public_03 takes {ctrl_day} of controller time")
+    sh = sh.replace("[SCALE_REPLY]", scale_reply)
     sh = sh.replace("[MEASURED: see reports/public_03.md]", f"ingest {eps} events/s, {ctrl_day} of controller time per simulated day{slow}{cont}, {rss} peak memory")
     sh = sh.replace("`[RESULT: credits used on public_01/02]`",
                     f"Credits used: {g1['credits_used']:.0f} on public_01, {g2['credits_used']:.0f} on public_02, of 200.")

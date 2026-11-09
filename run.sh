@@ -7,6 +7,8 @@
 #   OUTCOMELOOP_DB      path of the durable state (default: state/outcomeloop.db). Keep it across restarts:
 #                       re-running against the same simulator resumes (crash recovery). A different
 #                       simulator world is detected and the old DB is archived automatically.
+#                       Running two scenarios AT THE SAME TIME from one checkout? Give each its own OUTCOMELOOP_DB:
+#                       one controller per state file is enforced, so a second one on the same file exits with 3.
 #   OUTCOMELOOP_LOG     log level (default INFO)
 #   OUTCOMELOOP_PYTHON  interpreter to use (default: .venv if present, else python3)
 set -euo pipefail

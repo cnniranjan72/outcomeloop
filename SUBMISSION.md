@@ -19,10 +19,11 @@
   auto-apply; supervisor's unsafe prompt reverted through an approval with validation evidence (MTTR
   105 min); 2 harmful of 27 applied (nw_kyc v2 ['cohorts', 'welcome_message', 'voice', 'caller_id', 'schedule'] (engagement -0.016, caller-ID health +0.039); nw_renewal v9 ['welcome_message'] (engagement -0.066, caller-ID health +0.000); each explained in §11).
 - Kill -9 at any point and it resumes (9 hard kills on public_02; verification PASS: 20 checks, 0 failed); public_03 load: 21,609 events/s ingest, 73–108 s of controller time per simulated day for 12 workflows (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory.
-- Out of sample: six scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
+- Out of sample: seven scenarios of our own (different truth, policies, incidents, incl. one with **no true effects**)
   × 2 seeds plus both public scenarios — 16/16 runs finished with run.sh exit 0; conclusion rate +8.1% to +23.8% vs baseline; 0 false winners in 12 experiments on the no-effects scenario (§11).
-- Deliberately not built: LLM-driven anything beyond fix suggestions, fair-share across
-  tenants (C15), a UI (the supervisor view is a CLI over the same store).
+- Deliberately not built: any decision taken by an LLM (it only suggests prompt fixes), a blended KPI score,
+  promoting winners across clients, a web UI (the supervisor view is a CLI plus a read-only HTTP endpoint over the
+  same store), a fitted welcome × voice interaction model. C14 (observability) and C15 (fair share) are minimal.
 
 ## 1. Assumptions
 
@@ -89,12 +90,12 @@
 
 | # | Capability | Built / Partial / Cut | Why | What it would take to finish |
 |---|---|---|---|---|
-| C1 | Event ingestion at load scale | **Built** | Everything else is only as good as ingestion; exactly-once is the basis of crash safety. One transaction per chunk (rows + checkpoint), `INSERT OR IGNORE` on the event key. | Rollup tables at ingest so decisions don't scan raw rows at 10×. |
+| C1 | Event ingestion at load scale | **Built** | Everything else is only as good as ingestion; exactly-once is the basis of crash safety. One transaction per chunk (rows + checkpoint), `INSERT OR IGNORE` on the event key. | Shard ingestion across processes by workflow (prototyped and measured in `scripts/bench_shards.py`; not wired into `run.sh`). |
 | C2 | Lead/feature joins, one shared cohort object | **Built** | Product's hard requirement; features are joined onto every call row at ingest, cohort membership has one SQL implementation used by detection, experiments and the supervisor view, and it is mirrored 1:1 into `config.cohorts`. | Slice-based refinement of the cohort set (e.g. add `lang=ta`) via proposal. |
 | C3 | Bootstrapping from history | **Built** | History is the only evidence on D0: hour-of-day profiles, per-number pickup, QA flag baseline, cohort choice (likelihood-ratio test). | — |
 | C4 | Call-time optimisation | **Built** (cohort weights; per-person as a randomised experiment) | Cohort-level hour weights from smoothed history, dry-run estimated. Per-person preferred hours run as a self-terminating randomised experiment (treatment vs control people, pickup per dial), only where `schedule` is auto-appliable; it is kept only on evidence. | Extend per-person evidence to people returning from older campaigns. |
 | C5 | Caller-ID health | **Built** | Clearest outcome lever on pickup and a named incident type; randomisation makes it measurable. Fast/slow windows, equal split over healthy numbers, rest + re-probe, ramped auto-apply. | Load-aware model (pickup vs per-number volume) for planned rotation. |
-| C6 | Variant experimentation | **Built** | The core of "earning autonomy": factorial design, planned n, O'Brien-Fleming α spending, Holm, guardrail, cohort harm check. | Interaction check before promoting a combination. |
+| C6 | Variant experimentation | **Built** | The core of "earning autonomy": factorial design, planned n, O'Brien-Fleming α spending, Holm, guardrail, cohort harm check. | A fitted welcome × voice interaction model (today a winner must still win within the other dimension's dominant option, `_interaction`). |
 | C7 | Winner promotion, decay, rollback | **Built** | Holdout-based decay test against the promotion's lower confidence bound; rollback via approval; blacklist. | Faster decay detection with a CUSUM on the holdout lift. |
 | C8 | Hallucination incident response | **Built** | Safety in a regulated business; validation probe on supervisor edits, two-signal confirmation, known-good first then LLM, engagement-verified fix. | Prompt A/B is impossible (one prompt per workflow); a staged before/after design would be next. |
 | C9 | Governance client | **Built** | The non-negotiable boundary: state machine, batching, approver-hours timing with worst-case latency, fatigue with incident reserve, expiry = re-plan, stale = re-plan, auto-apply within policy and ramps. | Approver-attention budget shared across a tenant's workflows. |
@@ -230,7 +231,7 @@ stub.
   - *Loop health without logs.* The `metrics` table records ingest lag, events/s, decisions per hour, credit
     burn and backlog, readable from the CLI. (`python -m outcomeloop status`)
   - *< 10 min per simulated day on `public_03_load`.* Our share is 73–108 s per simulated day (`reports/public_03.md`).
-  - *Breaks at 10×.* Per-tick decision queries over raw rows first, then the single writer (§8).
+  - *Breaks at 10×.* Ingest CPU on one core first, then decisions running serially across workflows; sharding workflows across processes fixes both. The SQLite writer is not first (§8, `reports/scaling.md`).
 - **Pushed back / declined.**
   - *Redis is not used.* There is no queue or cache to share in a single-process loop.
   - *"The clock doesn't wait" is only partly met.* The loop is synchronous because the simulator pauses for
@@ -243,11 +244,12 @@ stub.
 
   > Kabir, no new stateful infrastructure: state is one SQLite file embedded in the process (WAL, fsync on
   > commit). It maps onto your existing Postgres for production, and Redis isn't needed. The kill/restart
-  > evidence is in the repo: random kills mid-ingest and mid-approval, resume, no double-apply, no lost
-  > approvals. Idempotency comes from transactional checkpoints and proposal IDs persisted before any call.
+  > evidence is in the repo: nine hard kills at chosen moments (mid-ingest, with an approval pending, approved but
+  > not applied, with a paid validation in flight, with a governance write in flight), each followed by a resume,
+  > no double-apply and no lost approval. Idempotency comes from transactional checkpoints and proposal IDs persisted before any call.
   > Pages fire only for stalled ingest, credits near the incident reserve, an approval about to lapse, or a
-  > crash loop. KPI drift waits for morning. Load numbers and the 10× breakpoint:
-  > ingest 21,609 events/s, 73–108 s of controller time per simulated day (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory.
+  > crash loop. KPI drift waits for morning. On load: one simulated day of public_03 takes 49 s of controller time in a 4 vCPU / 8 GB container (the budget is 10 minutes), live ingest runs at 38,679 events/s and peak memory is 360 MB. At 10× the first thing to go is ingest on
+  > one core; the fix is sharding workflows across processes, which I prototyped and measured.
 
 ### 04 — Anita Desai, Operations Supervisor, Kestrel Finance
 
@@ -351,7 +353,7 @@ stub.
     - Validation runs at n = 300 (3 credits).
     - An LLM never chooses a winner.
     - 40 % of credits is an incident reserve. Credits used: 0 on public_01, 6 on public_02, of 200.
-  - *Scale.* Transactional, idempotent chunk ingestion. `ingest 21,609 events/s, 73–108 s of controller time per simulated day (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory` We state what
+  - *Scale.* Transactional, idempotent chunk ingestion; one simulated day of public_03 takes 49 s of controller time in a 4 vCPU / 8 GB container (the budget is 10 minutes), live ingest runs at 38,679 events/s and peak memory is 360 MB (`reports/scaling.md`). We state what
     breaks first at 10× and how we'd partition by tenant and workflow.
   - *Choosing.* Per-person call time ships as an experiment rather than a rollout; the cuts in §2 each have a
     drafted message.
@@ -373,7 +375,7 @@ stub.
   > caller-ID health, hallucination response, and a full audit trail. Per-person call time runs as an experiment, and the cuts
   > are listed with reasons and drafted messages to the people affected. Every change on a client agent can be
   > explained from our own store in one command. Credits go first to known-good fixes, and 40 % is reserved for
-  > incidents. On scale: ingest 21,609 events/s, 73–108 s of controller time per simulated day (laptop run on a host ~2× slower than usual that day); in a 4 vCPU / 8 GB container (grader spec): 49 s per simulated day, 38,679 events/s live (`reports/scaling.md`), 360 MB peak memory. The first bottleneck at 10× isn't compute but
+  > incidents. On scale: one simulated day of public_03 takes 49 s of controller time in a 4 vCPU / 8 GB container (the budget is 10 minutes), live ingest runs at 38,679 events/s and peak memory is 360 MB. The first bottleneck at 10× isn't compute but
   > approver capacity at 2–4 requests per workflow per day. I've designed around that with batching. Three
   > memos contained claims the policies contradict; I followed the policies.
 
@@ -749,7 +751,7 @@ re-read whole (`reports/memory.md`).
    shard, on the platform's Postgres with `calls` partitioned by day.
 3. **Storage.** ~61 bytes per stored call row → ~10 GB/month at 10×. Retention
    policy with Compliance; rollups kept, raw calls archived after the audit window.
-4. **Credits and approver attention** become shared resources across 100+ workflows (C15, cut): per-tenant
+4. **Credits and approver attention** become shared resources across 100+ workflows (C15 is minimal today): per-tenant
    budgets ranked by impact score.
 
 ## 9. Reliability
@@ -915,7 +917,7 @@ listed in §14.
 ### Out of sample: the robustness suite (`reports/robustness.md`)
 
 Two public scenarios are too few to trust, and a controller tuned to them is the failure the brief warns about.
-We generated six scenarios of our own with the same schema and different truth, policies and incidents
+We generated seven scenarios of our own with the same schema and different truth, policies and incidents
 (`scripts/make_robustness_scenarios.py`; README "Robustness suite"), and run each — plus both public scenarios —
 at two random seeds. The table is the simulator grader's output:
 
@@ -1036,11 +1038,27 @@ How to read it, and what it taught us:
 6. **Dry runs ignore lead-pool depletion** for schedule changes (stated as an upper bound).
 7. **Credit-spending calls have no idempotency key.** A crash between sending a validation run and recording
    its result can spend credits twice (bounded: ≤ 3 credits per crash). The ledger marks such rows `sent`.
-8. **Single process, single SQLite writer.** Fine at public_03 scale (§8); at 10× it is the first thing to
-   change.
+8. **Single process.** Fine at public_03 scale (§8). At 10× ingest CPU on one core is the first limit, then
+   decisions running serially across workflows; the SQLite writer comes after both (`reports/scaling.md`).
 9. **Named approver.** The approval API exposes no approver identity, so "who approved" is the approval id
    and timestamp.
 10. **Tenant preferences are a static JSON file.** In production they belong in the tenant's policy record.
+11. **Calls are treated as independent observations.** Retries dial the same person again, and calls of one person
+    are correlated, so the binomial standard errors behind every z-test are somewhat optimistic. Randomisation is
+    per dial, so the lift estimates stay unbiased; the correction is a person-clustered standard error (or the
+    first call per person only). Not done; the null-effects scenario (0 false winners in 12) is the empirical check.
+12. **A borderline-unsafe prompt can take a day to fix.** In our own scenarios with few credits or a strict policy
+    (`r2_strict_policy_s2`, `r5_low_credits`) a supervisor prompt whose validation pass rate sat near the threshold
+    took 23–27 h to fix: validation could neither show it safe nor show it unsafe quickly, and we do not revert a
+    supervisor's prompt without evidence. public_02's clear-cut case took 105 min.
+13. **An urgent request can follow a rejection inside the cool-down.** Moving off a degraded caller ID, or rolling
+    back a promoted option that stopped beating its holdout, is sent even within 4 h of a rejection (public_02:
+    the `nw_renewal` rollback was rejected at D5 16:10 and re-requested at 17:00). The request says it is a re-request
+    and why, and the audit store records the override (`evidence.after_rejection`). The simulator's rejections are
+    random judgement calls; with a real approver we would read the stated reason before asking again.
+14. **One state file per controller.** Two controllers started from one checkout at the same time share the default
+    `state/outcomeloop.db`; the second exits with code 3 by design rather than risk duplicate applies. Concurrent
+    runs need their own `OUTCOMELOOP_DB` each (sequential runs are detected and archived automatically).
 
 ## 14. If this went to production at Formi next month
 

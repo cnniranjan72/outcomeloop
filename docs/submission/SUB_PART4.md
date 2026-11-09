@@ -31,7 +31,7 @@ re-read whole (`reports/memory.md`).
    shard, on the platform's Postgres with `calls` partitioned by day.
 3. **Storage.** ~{{LOAD_BYTES_PER_EVENT}} bytes per stored call row → ~{{LOAD_GB_MONTH}} GB/month at 10×. Retention
    policy with Compliance; rollups kept, raw calls archived after the audit window.
-4. **Credits and approver attention** become shared resources across 100+ workflows (C15, cut): per-tenant
+4. **Credits and approver attention** become shared resources across 100+ workflows (C15 is minimal today): per-tenant
    budgets ranked by impact score.
 
 ## 9. Reliability
@@ -132,7 +132,7 @@ listed in §14.
 ### Out of sample: the robustness suite (`reports/robustness.md`)
 
 Two public scenarios are too few to trust, and a controller tuned to them is the failure the brief warns about.
-We generated six scenarios of our own with the same schema and different truth, policies and incidents
+We generated seven scenarios of our own with the same schema and different truth, policies and incidents
 (`scripts/make_robustness_scenarios.py`; README "Robustness suite"), and run each — plus both public scenarios —
 at two random seeds. The table is the simulator grader's output:
 
