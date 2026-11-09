@@ -2,9 +2,9 @@ $ python -m outcomeloop --db state/public_02_incidents.db status
 
 # OutcomeLoop status at D9 21:00
 
-events ingested: 324,346 in 16.3s (19,895 events/s while ingesting)
+events ingested: 324,346 in 18.7s (17,352 events/s while ingesting)
 ingest lag: 180 sim-minutes · credits remaining: 194 · open proposals: 0 · peak RSS: 116.1 MB
-wall seconds per sim day: 0:5s, 1:5s, 2:5s, 3:5s, 4:5s, 5:5s, 6:5s, 7:5s, 8:5s, 9:5s
+wall seconds per sim day: 0:6s, 1:6s, 2:6s, 3:6s, 4:6s, 5:6s, 6:5s, 7:5s, 8:5s, 9:5s
 
 ## Recent alerts / incidents
   D5 13:00 wf0 decay_detected: welcome_message: winner stopped winning in ['default'] — rolling back to incumbent

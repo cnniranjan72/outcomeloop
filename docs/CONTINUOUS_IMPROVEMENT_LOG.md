@@ -35,6 +35,10 @@ marked *projected*; every measurement names its source.
 | 25 | **Runs were not reproducible** (public_02 diverged between runs) | A reviewer re-running a scenario would get a different audit trail | The caller-ID ramp iterated a set; key order (which the simulator samples by) followed the hash seed. Sorted | `scripts/determinism_check.sh`: identical decisions and events across hash seeds; the regression assertion fails on the old code | `b99b660` |
 | 26 | A verifier test was vacuous for INCOMPLETE faults | A test that cannot fail proves nothing | Removed the `or`; fixed the fault it had hidden | 17/17 | `f6986c5` |
 | 27 | No adversarial review of the claims | Interview: "what would make you reject this?" | `docs/ADVERSARIAL_REVIEW.md` | 12 attempts, 3 real findings | `1054f5d` |
+| 28 | An urgent rollback re-requested 50 min after a client rejection, with no audit record of the override | Governance hygiene is graded; "why did you ask again?" had no answer in the store | The request says it is a re-request and why; `evidence.after_rejection` in the audit. Outcome-neutral | 2 tests (one fails on the old code); public_02 store decision #230; grade reports byte-identical | `947d858` |
+| 29 | Read commands crashed when piped on Windows (`UnicodeEncodeError`) | A live-review hazard: `why … \| Select-String` | `main()` writes UTF-8 with replacement | regression test with a cp1252 stdout | `c61962e` |
+| 30 | SUBMISSION.md contradicted itself and the reports (C15 status, scenario count, 10× breakpoint, stale to-dos, "random kills", pasted generated text) | Most of the evaluation reads this file; contradictions cost credibility | Sources and generator fixed; 6 new honest weaknesses (§13.11–16); ten-minute read path; README quick start | `docs/FINAL_REMEDIATION_BACKLOG.md` #3 | `6155ba3` |
+| 31 | Crash-recovery evidence predated the determinism fix | Evidence must match the submitted code | Re-run on `6155ba3` | PASS, 20 checks, 0 failed; +26.9 % under 9 kills vs +25.3 % uninterrupted | (evidence commit) |
 
 ## Investigated, not done (and why)
 

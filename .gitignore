@@ -15,6 +15,8 @@ tests/robustness/*_s[0-9]*.yaml
 # interview preparation material: kept local, never committed
 INTERVIEW_PREPARATION.md
 docs/REVIEW_GUIDE.md
+docs/SENIOR_ENGINEER_REVIEW.md
+docs/ROUND2_MOCK_INTERVIEW.md
 tests/scale/
 reports/public_03_load.md
 

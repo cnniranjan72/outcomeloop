@@ -5,6 +5,9 @@
 
 > Repository map: controller in `src/outcomeloop/`, entry point `./run.sh <SIM_URL>`, grade reports and load /
 > crash evidence in `reports/`, design detail in `docs/DESIGN_DECISIONS.md`, runbook in `docs/OPERATIONS.md`.
+>
+> **Ten-minute read:** §0 TL;DR, §2 what was built and cut, the replies at the end of each memo in §3, §11 results,
+> §13 known weaknesses. The rest is the reasoning behind them.
 
 ---
 
@@ -764,7 +767,7 @@ re-read whole (`reports/memory.md`).
   once (event counts equal to the simulator's), calls table equal to the simulator's call events, no proposal or
   approval applied twice, every simulator approval known to our store, nothing left in an uncertain state,
   experiments and incidents not duplicated and continuing under the same ids, credits accounted for, run finished.
-  Outcomes under kills: conclusion rate +25.0% vs baseline with 9 kills vs +25.7% uninterrupted, both on the final decision logic (commit `1c12251`).
+  Outcomes under kills: conclusion rate +26.9% vs baseline with 9 kills vs +25.3% uninterrupted, both on the final decision logic (commit `6155ba3`).
 * **The test found three real defects**, all fixed: a paid validation result could be lost between the ledger
   and the incident (now one transaction); a supervisor-prompt probe was cleared before the validation call, so a
   crash forgot a pending safety check (now cleared in the same transaction as the result); and a caller-ID
@@ -1053,12 +1056,20 @@ How to read it, and what it taught us:
     supervisor's prompt without evidence. public_02's clear-cut case took 105 min.
 13. **An urgent request can follow a rejection inside the cool-down.** Moving off a degraded caller ID, or rolling
     back a promoted option that stopped beating its holdout, is sent even within 4 h of a rejection (public_02:
-    the `nw_renewal` rollback was rejected at D5 16:10 and re-requested at 17:00). The request says it is a re-request
+    the `nw_renewal` rollback was rejected by the approver at D5 16:10, seen by our 16:30 poll, and re-requested at 17:00). The request says it is a re-request
     and why, and the audit store records the override (`evidence.after_rejection`). The simulator's rejections are
     random judgement calls; with a real approver we would read the stated reason before asking again.
 14. **One state file per controller.** Two controllers started from one checkout at the same time share the default
     `state/outcomeloop.db`; the second exits with code 3 by design rather than risk duplicate applies. Concurrent
     runs need their own `OUTCOMELOOP_DB` each (sequential runs are detected and archived automatically).
+15. **Policies are read once, at startup.** The simulator's policies are fixed per scenario, so this holds here. In
+    production a policy can change under a pending approval: `_apply` checks the config *version*, not the policy, so
+    an approval granted before a new rule (say, "no voice changes on this workflow") would still be applied. Next
+    step: reload policies hourly and re-check a proposal's changed dimensions against the current policy right before
+    every apply and auto-apply.
+16. **Decisions are not gated on ingest lag.** Lag is measured every tick and pages after 30 min in dialling hours,
+    but in the simulator the clock waits for us, so routine decisions never see stale data. In production routine
+    changes should hold while lag is high (incident fixes and rollbacks keep running on the evidence already in).
 
 ## 14. If this went to production at Formi next month
 
